@@ -1,0 +1,82 @@
+{
+  "devnet": {
+    "countdown": {
+      "codeHash": "0xe7caf8decd013059a036120141b60e81a8823a0da9f427dd97cbc87ebce2fc10",
+      "hashType": "data1",
+      "cellDeps": [
+        {
+          "cellDep": {
+            "outPoint": {
+              "txHash": "0x706bd1d31bb3b5517e64d9bfdb2beb0b8f6bd34de2c342dcba5089b2e00316a5",
+              "index": 0
+            },
+            "depType": "code"
+          }
+        }
+      ]
+    },
+    "hello-world": {
+      "codeHash": "0xb00cb95906f73a63292d10f62f49bcd7d9dbb8607dca42e83bb09ed7a9d2da57",
+      "hashType": "data1",
+      "cellDeps": [
+        {
+          "cellDep": {
+            "outPoint": {
+              "txHash": "0xc398f76efee28dab231d6ac92fca7db268fd2ec0137d9f4f8cd879dd5249d9c6",
+              "index": 0
+            },
+            "depType": "code"
+          }
+        }
+      ]
+    }
+  },
+  "testnet": {
+    "always_success": {
+      "codeHash": "0xd483925160e4232b2cb29f012e8380b7b612d71cf4e79991476b6bcf610735f6",
+      "hashType": "data1",
+      "cellDeps": [
+        {
+          "cellDep": {
+            "outPoint": {
+              "txHash": "0xf754a81b5768f5443f1388570b43a06e3215581b72b1ca87c51c3c5400cd6da9",
+              "index": 0
+            },
+            "depType": "code"
+          }
+        }
+      ]
+    },
+    "countdown": {
+      "codeHash": "0xe7caf8decd013059a036120141b60e81a8823a0da9f427dd97cbc87ebce2fc10",
+      "hashType": "data1",
+      "cellDeps": [
+        {
+          "cellDep": {
+            "outPoint": {
+              "txHash": "0x249ee01724e6377c60d756f23b4239802d7ee5d69017aa85bef038767009956a",
+              "index": 0
+            },
+            "depType": "code"
+          }
+        }
+      ]
+    },
+    "hello-world": {
+      "codeHash": "0x262ae9e211eaf317e45ac3888d59be5811179ce7f2fb0a4686947458afb034bb",
+      "hashType": "data1",
+      "cellDeps": [
+        {
+          "cellDep": {
+            "outPoint": {
+              "txHash": "0xac2916858422e4b21914dfff35ee497705dd0617a6851f4be6208302599c9999",
+              "index": 0
+            },
+            "depType": "code"
+          }
+        }
+      ]
+    }
+  },
+  "mainnet": {}
+}
