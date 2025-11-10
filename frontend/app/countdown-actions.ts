@@ -3,7 +3,6 @@
 import { ccc, KnownScript } from '@ckb-ccc/connector-react';
 import offckb from '@/offckb.config';
 import { scriptToHash } from '@nervosnetwork/ckb-sdk-utils';
-import { getJoyIDCellDep, getJoyIDLockScript } from '@joyid/ckb';
 
 export type CountdownState = {
   version: number;
@@ -95,19 +94,12 @@ export function getCountdownTypeScript(): { codeHash: `0x${string}`; hashType: '
   return { codeHash: s.codeHash, hashType: s.hashType, args: '0x' };
 }
 
-export function getAlwaysSuccessLock(): { codeHash: `0x${string}`; hashType: 'data' | 'type' | 'data1'; args: '0x' } {
-  const sMy = offckb.myScripts['always_success'];
-  const s = sMy ?? offckb.systemScripts.always_success?.script;
-  if (!s) throw new Error('always_success script not found in offckb config');
+export function getCountdownLockScript(): { codeHash: `0x${string}`; hashType: 'data' | 'type' | 'data1'; args: '0x' } {
+  const s = offckb.myScripts['countdown'];
+  if (!s) throw new Error('countdown script not found in offckb config');
   return { codeHash: s.codeHash, hashType: s.hashType, args: '0x' };
 }
 
-export async function getAlwaysSuccessCellDeps(client: ccc.Client): Promise<ccc.CellDep[]> {
-  const sMy = offckb.myScripts['always_success'];
-  const s = sMy ?? offckb.systemScripts.always_success?.script;
-  if (!s) throw new Error('always_success script not found in offckb config');
-  return client.getCellDeps(s.cellDeps);
-}
 
 export async function getCountdownCellDeps(client: ccc.Client): Promise<ccc.CellDep[]> {
   const s = offckb.myScripts['countdown'];
@@ -150,25 +142,28 @@ export async function getTipHeader(client: ccc.Client): Promise<{ hash: string; 
 }
 
 export async function findActiveCountdownCell(client: ccc.Client): Promise<ccc.Cell | undefined> {
-  const type = getCountdownTypeScript();
-  const preferLock = getAlwaysSuccessLock();
+  const lockScript = getCountdownLockScript();
 
   let fallback: ccc.Cell | undefined;
   let count = 0;
-  for await (const cell of client.findCellsByType(type, true, 'desc', 20)) {
+  // 通过锁脚本的 code_hash 和 hash_type 进行索引，忽略 args（prefix 模式）
+  for await (const cell of client.findCells(
+    {
+      script: lockScript,
+      scriptType: 'lock',
+      scriptSearchMode: 'prefix',
+      withData: true,
+    },
+    'desc',
+    20,
+  )) {
     // 记录最新的一个作为后备
     if (!fallback) fallback = cell;
-
-    const lock = (cell as any)?.cellOutput?.lock;
-    if (lock && lock.codeHash?.toLowerCase() === preferLock.codeHash.toLowerCase() && lock.hashType === preferLock.hashType) {
-      console.info('findActiveCountdownCell: picked preferred always_success lock cell', cell.outPoint);
-      return cell;
-    }
     count++;
   }
 
   if (fallback) {
-    console.info('findActiveCountdownCell: fallback to the latest countdown cell', fallback.outPoint);
+    console.info('findActiveCountdownCell: picked latest countdown lock cell', fallback.outPoint);
   }
   return fallback;
 }
@@ -183,18 +178,17 @@ export async function createCountdownCell(
   },
 ): Promise<string> {
   const client = signer.client;
-  const [{ hash, number }, cellDeps] = await Promise.all([
+  const [{ hash, number }, depsCountdown] = await Promise.all([
     getTipHeader(client),
     getCountdownCellDeps(client),
   ]);
-
+  const cellDeps = [...depsCountdown];
   // payer's wallet lock (用于记录 last_payer_lock_hash)
   const addr = await signer.getRecommendedAddress();
   const payerScript = (await ccc.Address.fromString(addr, client)).script;
   const lastPayerLockHash = scriptToHash(payerScript);
   const depsWallet = await getWalletLockCellDeps(client, payerScript);
-  const type = getCountdownTypeScript();
-  const lockScript = getAlwaysSuccessLock();
+  const lockScript = getCountdownLockScript();
 
   // 校验并规范输出容量，避免链上 OccupiedCapacity 检查失败
   const capacityShannons = BigInt(ccc.fixedPointFrom(params.capacityCkb));
@@ -224,12 +218,11 @@ export async function createCountdownCell(
     headerDeps: [hash],
     outputs: [
       {
-        lock: lockScript,
-        type,
+        lock: { ...lockScript, args: encodeCountdownState(state) },
         capacity: capacityShannons,
       },
     ],
-    outputsData: [encodeCountdownState(state)],
+    outputsData: ['0x'],
   });
 
   // 打印原始交易 JSON（初始阶段）
@@ -257,11 +250,21 @@ export async function createCountdownCell(
 }
 
 export async function listCountdownCells(client: ccc.Client, page: number, pageSize: number): Promise<{ items: { cell: ccc.Cell; state: CountdownState }[]; hasMore: boolean }> {
-  const type = getCountdownTypeScript();
+  const lockScript = getCountdownLockScript();
   const needCount = Math.max(1, page) * Math.max(1, pageSize) + 1; // 取到下一页判断 hasMore
   const cells: ccc.Cell[] = [];
   let fetched = 0;
-  for await (const cell of client.findCellsByType(type, true, 'desc', needCount)) {
+  // 通过锁脚本的 code_hash 和 hash_type 进行索引，忽略 args（prefix 模式）
+  for await (const cell of client.findCells(
+    {
+      script: lockScript,
+      scriptType: 'lock',
+      scriptSearchMode: 'prefix',
+      withData: true,
+    },
+    'desc',
+    needCount,
+  )) {
     cells.push(cell);
     fetched++;
     if (fetched >= needCount) break;
@@ -271,7 +274,7 @@ export async function listCountdownCells(client: ccc.Client, page: number, pageS
   const items: { cell: ccc.Cell; state: CountdownState }[] = [];
   for (const c of selected) {
     try {
-      const st = decodeCountdownState(c.outputData);
+      const st = decodeCountdownState(c.cellOutput.lock.args);
       items.push({ cell: c, state: st });
     } catch (_e) {
       // 跳过无法解析的 cell
@@ -289,14 +292,13 @@ export async function extendCountdownCell(
   const cell = await findActiveCountdownCell(client);
   if (!cell) throw new Error('未找到 countdown cell');
 
-  const [{ hash, number }, depsCountdown, depsAlways] = await Promise.all([
+  const [{ hash, number }, depsCountdown] = await Promise.all([
     getTipHeader(client),
     getCountdownCellDeps(client),
-    getAlwaysSuccessCellDeps(client),
   ]);
-  const cellDeps = [...depsCountdown, ...depsAlways];
+  const cellDeps = [...depsCountdown];
 
-  const stateIn = decodeCountdownState(cell.outputData);
+  const stateIn = decodeCountdownState(cell.cellOutput.lock.args);
   const addedShannons = BigInt(ccc.fixedPointFrom(addedCkb));
   if (addedShannons < stateIn.minAddShannons) {
     throw new Error(`追加金额不足，至少需要 ${ccc.fixedPointToString(stateIn.minAddShannons)} CKB`);
@@ -311,9 +313,7 @@ export async function extendCountdownCell(
   const extBlocks = (addedShannons / SHANNONS_PER_CKB) * BigInt(stateIn.rateBlocksPerCkb);
   const endOut = base + extBlocks;
 
-  const type = getCountdownTypeScript();
-
-  // Build transaction: consume the countdown cell, recreate it with increased capacity and updated state (always_success 锁)
+  // Build transaction: consume the countdown cell, recreate it with increased capacity and updated state (countdown 锁)
   const input = ccc.CellInput.from({ previousOutput: cell.outPoint });
 
   const inCapacityStr = ccc.fixedPointToString(cell.cellOutput.capacity);
@@ -333,12 +333,12 @@ export async function extendCountdownCell(
     inputs: [input],
     outputs: [
       {
-        lock: cell.cellOutput.lock, // 保持为 always_success 锁
-        type,
+        lock: { ...cell.cellOutput.lock, args: encodeCountdownState(stateOut) }, // 更新 countdown 锁的 args
+        type: cell.cellOutput.type,
         capacity: ccc.fixedPointFrom(outCapacityStr),
       },
     ],
-    outputsData: [encodeCountdownState(stateOut)],
+    outputsData: [cell.outputData],
   });
 
   // 打印原始交易 JSON（初始阶段）
@@ -360,14 +360,13 @@ export async function extendSpecificCountdownCell(
   addedCkb: string | number,
 ): Promise<string> {
   const client = signer.client;
-  const [{ hash, number }, depsCountdown, depsAlways] = await Promise.all([
+  const [{ hash, number }, depsCountdown] = await Promise.all([
     getTipHeader(client),
     getCountdownCellDeps(client),
-    getAlwaysSuccessCellDeps(client),
   ]);
-  const cellDeps = [...depsCountdown, ...depsAlways];
+  const cellDeps = [...depsCountdown];
 
-  const stateIn = decodeCountdownState(cell.outputData);
+  const stateIn = decodeCountdownState(cell.cellOutput.lock.args);
   const addedShannons = BigInt(ccc.fixedPointFrom(addedCkb));
   if (addedShannons < stateIn.minAddShannons) {
     throw new Error(`追加金额不足，至少需要 ${ccc.fixedPointToString(stateIn.minAddShannons)} CKB`);
@@ -381,8 +380,6 @@ export async function extendSpecificCountdownCell(
   const base = (BigInt(number) > stateIn.endBlock ? BigInt(number) : stateIn.endBlock);
   const extBlocks = (addedShannons / SHANNONS_PER_CKB) * BigInt(stateIn.rateBlocksPerCkb);
   const endOut = base + extBlocks;
-
-  const type = getCountdownTypeScript();
 
   const input = ccc.CellInput.from({ previousOutput: cell.outPoint });
   const inCapacityStr = ccc.fixedPointToString(cell.cellOutput.capacity);
@@ -402,12 +399,12 @@ export async function extendSpecificCountdownCell(
     inputs: [input],
     outputs: [
       {
-        lock: cell.cellOutput.lock, // 保持为 always_success 锁
-        type,
+        lock: { ...cell.cellOutput.lock, args: encodeCountdownState(stateOut) }, // 更新 countdown 锁的 args
+        type: cell.cellOutput.type,
         capacity: ccc.fixedPointFrom(outCapacityStr),
       },
     ],
-    outputsData: [encodeCountdownState(stateOut)],
+    outputsData: [cell.outputData],
   });
 
   logRawTx('init:extend_specific', tx);
@@ -424,13 +421,12 @@ export async function closeSpecificCountdownCell(
   cell: ccc.Cell,
 ): Promise<string> {
   const client = signer.client;
-  const [{ hash, number }, depsCountdown, depsAlways] = await Promise.all([
+  const [{ hash, number }, depsCountdown] = await Promise.all([
     getTipHeader(client),
     getCountdownCellDeps(client),
-    getAlwaysSuccessCellDeps(client),
   ]);
 
-  const stateIn = decodeCountdownState(cell.outputData);
+  const stateIn = decodeCountdownState(cell.cellOutput.lock.args);
   const now = BigInt(number);
   if (now < stateIn.endBlock) {
     throw new Error(`尚未到期，当前区块 ${number} < 结束区块 ${stateIn.endBlock}`);
@@ -443,7 +439,7 @@ export async function closeSpecificCountdownCell(
     throw new Error('当前账户不是最后出价者，无法关闭并领取奖励');
   }
   const depsWallet = await getWalletLockCellDeps(client, walletLock);
-  const cellDeps = [...depsCountdown, ...depsAlways, ...depsWallet];
+  const cellDeps = [...depsCountdown, ...depsWallet];
 
   const input = ccc.CellInput.from({ previousOutput: cell.outPoint });
   const inCapacityStr = ccc.fixedPointToString(cell.cellOutput.capacity);
@@ -474,14 +470,13 @@ export async function closeCountdownCell(signer: ccc.Signer): Promise<string> {
   const cell = await findActiveCountdownCell(client);
   if (!cell) throw new Error('未找到 countdown cell');
 
-  const [{ hash, number }, depsCountdown, depsAlways] = await Promise.all([
+  const [{ hash, number }, depsCountdown] = await Promise.all([
     getTipHeader(client),
     getCountdownCellDeps(client),
-    getAlwaysSuccessCellDeps(client),
   ]);
-  const cellDeps = [...depsCountdown, ...depsAlways];
+  const cellDeps = [...depsCountdown];
 
-  const stateIn = decodeCountdownState(cell.outputData);
+  const stateIn = decodeCountdownState(cell.cellOutput.lock.args);
   const now = BigInt(number);
   if (now < stateIn.endBlock) {
     throw new Error(`尚未到期，当前区块 ${number} < 结束区块 ${stateIn.endBlock}`);

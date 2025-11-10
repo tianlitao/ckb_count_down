@@ -36,6 +36,8 @@ default: build test
 
 build:
 	RUSTFLAGS="$(FULL_RUSTFLAGS)" TARGET_CC="$(CLANG)" TARGET_AR="$(AR)" \
+		CC_riscv64imac_unknown_none_elf="$(CLANG)" AR_riscv64imac_unknown_none_elf="$(AR)" \
+		CC_riscv64_unknown_elf="$(CLANG)" AR_riscv64_unknown_elf="$(AR)" \
 		cargo build --target=riscv64imac-unknown-none-elf $(MODE_ARGS) $(CARGO_ARGS)
 	@set -eu; \
 	if [ "x$(BUILD_DIR)" != "x" ]; then \

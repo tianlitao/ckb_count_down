@@ -48,13 +48,13 @@
       ]
     },
     "countdown": {
-      "codeHash": "0xe7caf8decd013059a036120141b60e81a8823a0da9f427dd97cbc87ebce2fc10",
+      "codeHash": "0x2cd10076e594251b5e1fdb6a0f860ff72b794a0b0b9b0d0a3dfa90b4ce1ae37e",
       "hashType": "data1",
       "cellDeps": [
         {
           "cellDep": {
             "outPoint": {
-              "txHash": "0x249ee01724e6377c60d756f23b4239802d7ee5d69017aa85bef038767009956a",
+              "txHash": "0xd0daad3996597e15a1dc443b509bf9853729dfc76785d035619ce03025763130",
               "index": 0
             },
             "depType": "code"
@@ -70,6 +70,36 @@
           "cellDep": {
             "outPoint": {
               "txHash": "0xac2916858422e4b21914dfff35ee497705dd0617a6851f4be6208302599c9999",
+              "index": 0
+            },
+            "depType": "code"
+          }
+        }
+      ]
+    },
+    "miner": {
+      "codeHash": "0x9bc848d071e60276f982fb396090bc044707047ec3ff20c612a601aeaeeb8740",
+      "hashType": "data1",
+      "cellDeps": [
+        {
+          "cellDep": {
+            "outPoint": {
+              "txHash": "0xb45d30d5aeceb3dfc2b29952d29135c5f215bcb12566e14f44ae53b740408b9b",
+              "index": 0
+            },
+            "depType": "code"
+          }
+        }
+      ]
+    },
+    "vein": {
+      "codeHash": "0x1b72288fd45a77f70a64d0cb722927d032f4416c63608eeaf3bd718ec4465655",
+      "hashType": "data1",
+      "cellDeps": [
+        {
+          "cellDep": {
+            "outPoint": {
+              "txHash": "0x89bf6e9ad7e859b4d8f152297723f0143342663623c6d6f9715694500aeabe9b",
               "index": 0
             },
             "depType": "code"
