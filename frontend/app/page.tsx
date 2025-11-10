@@ -157,7 +157,7 @@ export default function Home() {
                     <div className="text-right">倒计时: {tipNumber != null ? formatDuration(countdownSec) : '-'}</div>
                     <div className="col-span-2 break-all">
                       {lastPayerAddrMap[key]
-                        ? <>最后付款人地址: {lastPayerAddrMap[key]}{myAddress && lastPayerAddrMap[key] && lastPayerAddrMap[key].toLowerCase() === myAddress.toLowerCase() ? ' (我)' : ''}</>
+                        ? <>最后付款人地址: {lastPayerAddrMap[key]}{myAddress && ((lastPayerAddrMap[key] ?? '').toLowerCase() === (myAddress ?? '').toLowerCase()) ? ' (我)' : ''}</>
                         : <>最后付款人锁哈希: {state.lastPayerLockHash}</>}
                     </div>
                     <div>每 CKB 增加区块数: {state.rateBlocksPerCkb}</div>

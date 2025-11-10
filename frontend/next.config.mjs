@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: "export", // 生成静态站点到 out 目录
   experimental: {
     optimizePackageImports: ["@ckb-ccc/core", "@ckb-ccc/core/bundle"],
   },
