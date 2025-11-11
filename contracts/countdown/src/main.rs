@@ -20,15 +20,20 @@ ckb_std::entry!(program_entry);
 ckb_std::default_alloc!(16384, 1258306, 64);
 
 const SHANNONS_PER_CKB: u64 = 100_000_000;
-const STATE_LEN: usize = 60; // u32 + u64 + [u8;32] + u64 + u64
+// New state layout:
+// u32(version) + u64(end_block) + u64(rate_blocks_per_ckb)
+// + u64(min_add_shannons) + u128(xudt_per_block) + u128(min_pool_xudt)
+// = 60 bytes
+const STATE_LEN: usize = 60;
 
 #[derive(Clone, Copy, Debug)]
 struct State {
     version: u32,
     end_block: u64,
-    last_payer_lock_hash: [u8; 32],
     rate_blocks_per_ckb: u64,
     min_add_shannons: u64,
+    xudt_per_block: u128,
+    min_pool_xudt: u128,
 }
 
 fn decode_state(data: &[u8]) -> Option<State> {
@@ -37,22 +42,18 @@ fn decode_state(data: &[u8]) -> Option<State> {
     }
     let version = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
     let end_block = u64::from_le_bytes(data[4..12].try_into().ok()?);
-    let mut last = [0u8; 32];
-    last.copy_from_slice(&data[12..44]);
-    let rate = u64::from_le_bytes(data[44..52].try_into().ok()?);
-    let min = u64::from_le_bytes(data[52..60].try_into().ok()?);
+    let rate = u64::from_le_bytes(data[12..20].try_into().ok()?);
+    let min = u64::from_le_bytes(data[20..28].try_into().ok()?);
+    let xudt_per_block = u128::from_le_bytes(data[28..44].try_into().ok()?);
+    let min_pool_xudt = u128::from_le_bytes(data[44..60].try_into().ok()?);
     Some(State {
         version,
         end_block,
-        last_payer_lock_hash: last,
         rate_blocks_per_ckb: rate,
         min_add_shannons: min,
+        xudt_per_block,
+        min_pool_xudt,
     })
-}
-
-fn current_script_hash() -> Result<Byte32, SysError> {
-    let script = load_script()?;
-    Ok(script.calc_script_hash())
 }
 
 // 查找与当前锁脚本完全一致（含相同 args）的输入/输出索引
@@ -93,29 +94,14 @@ fn max_header_dep_number() -> Result<Option<u64>, SysError> {
     Ok(maxn)
 }
 
-fn input_has_lock_hash(lock_hash: &[u8; 32], exclude_idx: Option<usize>) -> Result<bool, SysError> {
-    for (i, lh) in QueryIter::new(load_cell_lock_hash, Source::Input).enumerate() {
-        if let Some(ex) = exclude_idx {
-            if i == ex {
-                continue;
-            }
-        }
-        if lh == *lock_hash {
-            return Ok(true);
-        }
+fn xudt_amount_at(index: usize, source: Source) -> Result<u128, SysError> {
+    let data = load_cell_data(index, source)?;
+    if data.len() < 16 {
+        return Err(SysError::Encoding);
     }
-    Ok(false)
-}
-
-fn sum_outputs_capacity_with_lock(lock_hash: &[u8; 32]) -> Result<u64, SysError> {
-    let mut sum: u64 = 0;
-    for (i, lh) in QueryIter::new(load_cell_lock_hash, Source::Output).enumerate() {
-        if lh == *lock_hash {
-            let cap = load_cell_capacity(i, Source::Output)?;
-            sum = sum.checked_add(cap).ok_or(SysError::Encoding)?;
-        }
-    }
-    Ok(sum)
+    let mut amt_bytes = [0u8; 16];
+    amt_bytes.copy_from_slice(&data[0..16]);
+    Ok(u128::from_le_bytes(amt_bytes))
 }
 
 fn validate() -> Result<(), SysError> {
@@ -151,20 +137,15 @@ fn validate() -> Result<(), SysError> {
         }
         let out_idx = out_code_indices[0];
 
-        // type script 与 cell data 不允许修改
-        let in_type = load_cell_type_hash(in_idx, Source::Input)?;
-        let out_type = load_cell_type_hash(out_idx, Source::Output)?;
-        match (in_type, out_type) {
-            (None, None) => {}
+        // type script 必须存在且与输入的类型脚本哈希一致（同一 XUDT 资产）
+        let in_type_hash = load_cell_type_hash(in_idx, Source::Input)?;
+        let out_type_hash = load_cell_type_hash(out_idx, Source::Output)?;
+        match (in_type_hash, out_type_hash) {
             (Some(a), Some(b)) if a == b => {}
             _ => return Err(SysError::Encoding),
         }
-        let in_data = load_cell_data(in_idx, Source::Input)?;
-        let out_data = load_cell_data(out_idx, Source::Output)?;
-        if in_data != out_data {
-            return Err(SysError::Encoding);
-        }
 
+        // 允许修改 data，但需要校验铸币量与延长的区块数按比例一致
         let game_out_capacity = load_cell_capacity(out_idx, Source::Output)?;
         let added = game_out_capacity
             .checked_sub(game_in_capacity)
@@ -173,17 +154,9 @@ fn validate() -> Result<(), SysError> {
             return Err(SysError::Encoding);
         }
 
-        // 新状态校验
+        // 新状态校验（仅可变 end_block）和不变参数约束
         let out_lock = load_cell_lock(out_idx, Source::Output)?;
         let state_out = decode_state(out_lock.args().raw_data().as_ref()).ok_or(SysError::Encoding)?;
-
-        // 付费者锁必须在输入中出现（排除游戏Cell自身）
-        let payer_present = input_has_lock_hash(&state_out.last_payer_lock_hash, Some(in_idx))?;
-        if !payer_present {
-            return Err(SysError::ItemMissing);
-        }
-
-        // 不可变参数
         if state_out.rate_blocks_per_ckb != state_in.rate_blocks_per_ckb {
             return Err(SysError::Encoding);
         }
@@ -193,8 +166,14 @@ fn validate() -> Result<(), SysError> {
         if state_out.version != state_in.version {
             return Err(SysError::Encoding);
         }
+        if state_out.xudt_per_block != state_in.xudt_per_block {
+            return Err(SysError::Encoding);
+        }
+        if state_out.min_pool_xudt != state_in.min_pool_xudt {
+            return Err(SysError::Encoding);
+        }
 
-        // end_block更新公式
+        // end_block 更新公式
         let base = core::cmp::max(state_in.end_block, now_block);
         let added_blocks_ckb = added / SHANNONS_PER_CKB;
         let added_blocks = added_blocks_ckb
@@ -205,22 +184,92 @@ fn validate() -> Result<(), SysError> {
             return Err(SysError::Encoding);
         }
 
+        // XUDT 分发校验（不增发）：
+        // 注：净增发为 0 的约束由 XUDT 类型脚本负责，这里不重复校验。
+
+        // 2) 游戏池内的 XUDT 必须按比例减少：
+        //    distribute = 新增区块数 * xudt_per_block
+        //    pool_y_out == pool_y_in - distribute
+        let pool_y_in = xudt_amount_at(in_idx, Source::Input)?;
+        let distribute = state_in
+            .xudt_per_block
+            .checked_mul(u128::from(added_blocks))
+            .ok_or(SysError::Encoding)?;
+        let expected_pool_y_out = pool_y_in
+            .checked_sub(distribute)
+            .ok_or(SysError::Encoding)?;
+
+        // 流动性池最低 XUDT 数量（输出游戏池）
+        let pool_y_out = xudt_amount_at(out_idx, Source::Output)?;
+        if pool_y_out != expected_pool_y_out {
+            return Err(SysError::Encoding);
+        }
+        if pool_y_out < state_in.min_pool_xudt {
+            return Err(SysError::Encoding);
+        }
+
         Ok(())
     } else {
-        // 关闭路径：到期后不允许延长，必须发奖给最后付费者
-        if !out_code_indices.is_empty() {
+        // Swap 模式：到期后允许使用同一锁代码维持池子，实行常数乘积 k = x * y
+        if out_code_indices.len() != 1 {
             return Err(SysError::IndexOutOfBound);
         }
+        let out_idx = out_code_indices[0];
 
-        // 仅最终中奖者可领取：赢家锁在输入中出现（需签名）
-        let winner_present = input_has_lock_hash(&state_in.last_payer_lock_hash, None)?;
-        if !winner_present {
-            return Err(SysError::ItemMissing);
+        // type script 必须存在且与输入一致（保证同一 XUDT 资产）
+        let in_type_hash = load_cell_type_hash(in_idx, Source::Input)?;
+        let out_type_hash = load_cell_type_hash(out_idx, Source::Output)?;
+        match (in_type_hash, out_type_hash) {
+            (Some(a), Some(b)) if a == b => {}
+            _ => return Err(SysError::Encoding),
         }
 
-        // 奖池至少等于游戏Cell的输入容量总额
-        let payout_sum = sum_outputs_capacity_with_lock(&state_in.last_payer_lock_hash)?;
-        if payout_sum < game_in_capacity {
+        // 锁 args 在 swap 模式下保持不变（固定池参数一致性）
+        let in_lock = load_cell_lock(in_idx, Source::Input)?;
+        let out_lock = load_cell_lock(out_idx, Source::Output)?;
+        if in_lock.args().raw_data().as_ref() != out_lock.args().raw_data().as_ref() {
+            return Err(SysError::Encoding);
+        }
+
+        // 读取储备：x = capacity(shannons), y = xudt amount(前16字节)
+        let x_in = game_in_capacity; // u64
+        let y_in = xudt_amount_at(in_idx, Source::Input)?; // u128
+        let x_out = load_cell_capacity(out_idx, Source::Output)?; // u64
+        let y_out = xudt_amount_at(out_idx, Source::Output)?; // u128
+
+        // 计算变化量（swap 只允许单边增加，另一边减少）
+        let dx: i128 = (x_out as i128) - (x_in as i128);
+        let dy: i128 = (y_out as i128) - (y_in as i128);
+        if dx == 0 || dy == 0 {
+            return Err(SysError::Encoding);
+        }
+
+        // 常数乘积校验：
+        // - CKB -> XUDT：dx > 0, dy < 0，要求 y_out == floor((x_in * y_in) / x_out)
+        // - XUDT -> CKB：dx < 0, dy > 0，要求 x_out == floor((x_in * y_in) / y_out)
+        let xin_u128 = u128::from(x_in);
+        if dx > 0 && dy < 0 {
+            let xout_u128 = u128::from(x_out);
+            let numer = xin_u128.checked_mul(y_in).ok_or(SysError::Encoding)?;
+            let expected_y_out = numer
+                .checked_div(xout_u128)
+                .ok_or(SysError::Encoding)?;
+            if y_out != expected_y_out {
+                return Err(SysError::Encoding);
+            }
+        } else if dx < 0 && dy > 0 {
+            let numer = xin_u128.checked_mul(y_in).ok_or(SysError::Encoding)?;
+            if y_out == 0 {
+                return Err(SysError::IndexOutOfBound);
+            }
+            let expected_x_out_u128 = numer
+                .checked_div(y_out)
+                .ok_or(SysError::Encoding)?;
+            let expected_x_out_u64 = u64::try_from(expected_x_out_u128).map_err(|_| SysError::Encoding)?;
+            if x_out != expected_x_out_u64 {
+                return Err(SysError::Encoding);
+            }
+        } else {
             return Err(SysError::Encoding);
         }
 

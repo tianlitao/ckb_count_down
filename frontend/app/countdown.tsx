@@ -5,7 +5,6 @@ import { ccc } from '@ckb-ccc/connector-react';
 import {
   createCountdownCell,
   extendCountdownCell,
-  closeCountdownCell,
   findActiveCountdownCell,
   decodeCountdownState,
 } from './countdown-actions';
@@ -30,6 +29,9 @@ export default function Countdown() {
   const [capacityCkb, setCapacityCkb] = useState<string>('150');
   const [rateBlocksPerCkb, setRateBlocksPerCkb] = useState<string>('100');
   const [minAddCkb, setMinAddCkb] = useState<string>('1');
+  // 新增：创建所需的 XUDT 参数
+  const [xudtPerBlock, setXudtPerBlock] = useState<string>('100');
+  const [minPoolXudt, setMinPoolXudt] = useState<string>('0');
   const [tipNumber, setTipNumber] = useState<bigint | null>(null);
 
   // extend params
@@ -68,6 +70,17 @@ export default function Countdown() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client]);
 
+  // 将原子单位（u128）按默认 decimals 展示为人类可读（默认 8 位）
+  const formatU128Display = (val: bigint, decimals: number = 8) => {
+    const d = Math.max(0, decimals | 0);
+    let base = BigInt(1);
+    for (let i = 0; i < d; i++) base *= BigInt(10);
+    const intPart = (val / base).toString();
+    const fracRaw = (val % base).toString().padStart(d, '0');
+    const frac = fracRaw.replace(/0+$/, '');
+    return frac.length ? `${intPart}.${frac}` : intPart;
+  };
+
   return (
     <div className="my-6">
       <div className="text-xl font-semibold my-2">Countdown 合约操作</div>
@@ -80,9 +93,10 @@ export default function Countdown() {
         <div className="mb-4 text-sm">
           <div>version: {state.version}</div>
           <div>end_block: {state.endBlock.toString()}</div>
-          <div>last_payer_lock_hash: {state.lastPayerLockHash}</div>
           <div>rate_blocks_per_ckb: {state.rateBlocksPerCkb}</div>
           <div>min_add_ckb: {ccc.fixedPointToString(state.minAddShannons)}</div>
+          <div>xudt_per_block: {formatU128Display(state.xudtPerBlock)}</div>
+          <div>min_pool_xudt: {formatU128Display(state.minPoolXudt)}</div>
         </div>
       ) : (
         <div className="mb-4 text-sm">状态不可用（未创建或数据缺失）</div>
@@ -129,6 +143,20 @@ export default function Countdown() {
               onInput={(e) => setMinAddCkb(e.currentTarget.value)}
               placeholder="最小追加 CKB"
             />
+            <input
+              className="mt-1 rounded-full border border-black px-4 py-2"
+              type="text"
+              value={xudtPerBlock}
+              onInput={(e) => setXudtPerBlock(e.currentTarget.value)}
+              placeholder="每区块分发 XUDT（u128 原子单位）"
+            />
+            <input
+              className="mt-1 rounded-full border border-black px-4 py-2"
+              type="text"
+              value={minPoolXudt}
+              onInput={(e) => setMinPoolXudt(e.currentTarget.value)}
+              placeholder="池最低 XUDT（u128 原子单位）"
+            />
           </div>
           <Button
             className="ml-2"
@@ -140,6 +168,8 @@ export default function Countdown() {
                   capacityCkb,
                   rateBlocksPerCkb: Number(rateBlocksPerCkb),
                   minAddCkb,
+                  xudtPerBlock,
+                  minPoolXudt,
                 });
                 setStatus(`创建成功: ${txHash}`);
                 void refreshState();
@@ -180,24 +210,7 @@ export default function Countdown() {
         </div>
       </div>
 
-      <div className="mt-4 p-4 border rounded-2xl">
-        <div className="font-semibold mb-2">关闭 countdown cell</div>
-        <div className="flex items-center">
-          <Button
-            disabled={!signer}
-            onClick={async () => {
-              if (!signer) return;
-              try {
-                const txHash = await closeCountdownCell(signer);
-                setStatus(`关闭成功: ${txHash}`);
-                void refreshState();
-              } catch (e: any) {
-                setStatus(`关闭失败: ${e?.message ?? String(e)}`);
-              }
-            }}
-          >关闭</Button>
-        </div>
-      </div>
+      {/* 已移除领取/关闭功能按钮 */}
     </div>
   );
 }

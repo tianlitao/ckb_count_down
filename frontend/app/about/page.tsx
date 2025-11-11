@@ -9,7 +9,7 @@ export default function About() {
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
         <div className="max-w-screen-md mx-auto flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-4">
-            <Link href="/" className="font-bold text-2xl md:text-3xl tracking-tight no-underline">CountdownCell</Link>
+            <Link href="/" className="font-bold text-2xl md:text-3xl tracking-tight no-underline">FairLaunchCell</Link>
             <nav className="flex items-center gap-4 md:gap-6 text-base md:text-lg">
               <Link href="/" className="hover:underline">首页</Link>
               <Link href="/create" className="hover:underline">创建</Link>
@@ -23,11 +23,11 @@ export default function About() {
       </header>
 
       <main className="max-w-screen-md mx-auto px-4 py-6">
-        <div className="text-2xl font-bold mb-4">关于倒计时合约（Countdown）</div>
+        <div className="text-2xl font-bold mb-4">关于公平发射平台（Fair Launch）</div>
 
         <section className="space-y-3">
           <p>
-            本项目基于 Nervos CKB 的 Cell 模型实现一个「倒计时」玩法：任意人都可以向该 Cell 追加 CKB 来延长倒计时；当倒计时结束后，最后一次成功追加的人（最后出价者）可以关闭并领取该 Cell 的全部容量作为奖励。
+            本项目基于 Nervos CKB 的 Cell 模型实现一个「公平发射」流程：创建者将 xUDT 代币配置并铸造到 <code>Fair Launch Lock</code>，在设定的延时周期内持续按区块分发；当延时结束后，开启 Swap（常数乘积池），用户即可在固定池中按 <code>k = x * y</code> 的规则与 CKB 进行兑换。
           </p>
           <p>
             前端使用 Next.js + TailwindCSS，钱包连接与交易构建基于 <code>@ckb-ccc/connector-react</code>。当前网络：<code>{process.env.NEXT_PUBLIC_NETWORK ?? 'testnet'}</code>。
@@ -40,34 +40,44 @@ export default function About() {
           <h2 className="text-xl font-semibold mb-2">核心概念</h2>
           <ul className="list-disc pl-5 space-y-2">
             <li>
-              结束区块（<code>endBlock</code>）：当当前区块高度达到或超过该值，倒计时结束。
+              xUDT 代币：包含 <code>symbol</code> 与 <code>decimals</code>（当前固定为 8），用于展示与换算。
             </li>
             <li>
-              最后出价者锁哈希（<code>lastPayerLockHash</code>）：记录最后一次成功追加的账户的锁哈希。
+              xUDT 通过一次性密封（Single‑Use‑Seals，SUS）机制实现总量不可增发，参考：
+              <a href="https://talk.nervos.org/t/en-cn-misc-single-use-seals/8279" target="_blank" rel="noopener noreferrer" className="underline">Single‑Use‑Seals（一次性密封）</a>
             </li>
             <li>
-              每 CKB 增加区块数（<code>rateBlocksPerCkb</code>）：每追加 1 CKB，增加的区块数量。
+              发射结束区块（<code>endBlock</code>）：到达该区块后，延时分发结束，Swap 开启。
             </li>
             <li>
-              最小追加金额（<code>minAddShannons</code>）：每次追加的最小 CKB 金额（Shannons）。
+              每块铸币（<code>mintPerBlock</code>）：在延时期间，每个区块分发的 xUDT（展示单位，按 <code>decimals</code> 转为原子单位）。
+            </li>
+            <li>
+              池最低余额（<code>minPoolXudt</code>）：为常数乘积池预留的 xUDT 最小余额（展示单位）。
+            </li>
+            <li>
+              常数乘积池（<code>k = x * y</code>）：Swap 采用固定乘积做市，价格由池内 xUDT 与 CKB 的相对数量决定。
+            </li>
+            <li>
+              延时追加：任意人可追加 CKB 来延长 <code>endBlock</code>（平台支持延时分发的公平性机制）。
             </li>
           </ul>
         </section>
 
         <section className="mt-6">
-          <h2 className="text-xl font-semibold mb-2">玩法规则</h2>
+          <h2 className="text-xl font-semibold mb-2">流程与规则</h2>
           <ul className="list-disc pl-5 space-y-2">
             <li>
-              创建：在「创建」页设定 <code>rateBlocksPerCkb</code> 与 <code>minAddCkb</code>，并为 Cell 充值初始容量。创建后结束区块将按初始容量自动计算（<code>capacity</code> × <code>rateBlocksPerCkb</code>），初始 <code>lastPayerLockHash</code> 为创建人。
+              创建：在「创建」页配置 xUDT 基本信息（<code>symbol</code>、<code>name</code>、<code>decimals</code> 当前固定为 8），设置 <code>mintPerBlock</code> 与 <code>minPoolXudt</code>，并准备初始资金。
             </li>
             <li>
-              追加（未到期时）：输入追加的 CKB 数量。每次追加会按比例延长 <code>endBlock</code>，并把你记为「最后出价者」。
+              延时分发（未到期）：当用户追加 CKB 延长 <code>endBlock</code> 时，按「延长的区块数 × <code>mintPerBlock</code>」实时分发对应数量的 xUDT 到该用户地址。
             </li>
             <li>
-              领取（到期后）：仅最后出价者可以关闭并领取 Cell 的全部容量。
+              开启兑换（到期后）：到达 <code>endBlock</code> 即开启 Swap，采用常数乘积池 <code>k = x * y</code> 进行 xUDT 与 CKB 的兑换，价格随池内资产比例动态变化。
             </li>
             <li>
-              费用：交易需要足够的手续费（fee rate 满足矿池要求），否则会被拒绝。
+              费用：交易需要足够的手续费（fee rate 满足矿池要求），否则会被拒绝。平台不收取任何手续费费用。
             </li>
           </ul>
         </section>
@@ -76,9 +86,9 @@ export default function About() {
           <h2 className="text-xl font-semibold mb-2">操作指引</h2>
           <ol className="list-decimal pl-5 space-y-2">
             <li>在右上角连接钱包（如 JoyID 或其他 CKB 钱包）。</li>
-            <li>在首页列表选择一个未到期的 Cell，输入追加金额点击「延长」。</li>
-            <li>等待到期后（显示「已到期」），若你是最后出价者，点击「领取」。</li>
-            <li>在「创建」页可以创建新的倒计时 Cell 并设置参数。</li>
+            <li>在「创建」页配置代币信息并设置每块铸币与池最低余额（展示单位，按 8 位小数换算）。</li>
+            <li>在首页选择未到期的条目，输入 CKB 追加以延长分发周期。并获取对应数量的 xUDT。</li>
+            <li>当到期后，前往「Swap」页面按常数乘积池规则进行 xUDT ↔ CKB 兑换。</li>
           </ol>
         </section>
 
