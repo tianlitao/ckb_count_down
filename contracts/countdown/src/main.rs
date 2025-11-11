@@ -112,7 +112,7 @@ fn validate() -> Result<(), SysError> {
 
     // 当前锁脚本所在输入组（相同锁哈希）
     let in_indices = indices_with_lock_hash(Source::Input, &script_hash)?;
-    // 输出中使用同一锁代码的索引（args 可不同，用于延长/关闭判断）
+    // 输出中使用同一锁代码的索引（args 可不同，用于 Mint/关闭 判断）
     let out_code_indices = indices_with_lock_code(Source::Output, &code_hash)?;
 
     // 通过 header_deps 获取当前区块高度
@@ -129,9 +129,9 @@ fn validate() -> Result<(), SysError> {
     let state_in = decode_state(in_lock.args().raw_data().as_ref()).ok_or(SysError::Encoding)?;
     let game_in_capacity = load_cell_capacity(in_idx, Source::Input)?;
 
-    // 延长/关闭路径判断
+    // Mint/关闭 路径判断
     if now_block < state_in.end_block {
-        // 延长路径
+        // Mint 路径
         if out_code_indices.len() != 1 {
             return Err(SysError::IndexOutOfBound);
         }
@@ -145,7 +145,7 @@ fn validate() -> Result<(), SysError> {
             _ => return Err(SysError::Encoding),
         }
 
-        // 允许修改 data，但需要校验铸币量与延长的区块数按比例一致
+        // 允许修改 data，但需要校验铸币量与增加的区块数按比例一致
         let game_out_capacity = load_cell_capacity(out_idx, Source::Output)?;
         let added = game_out_capacity
             .checked_sub(game_in_capacity)

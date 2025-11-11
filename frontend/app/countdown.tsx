@@ -121,7 +121,7 @@ export default function Countdown() {
               type="text"
               value={rateBlocksPerCkb}
               onInput={(e) => setRateBlocksPerCkb(e.currentTarget.value)}
-              placeholder="每 CKB 延长的块数"
+              placeholder="每 CKB 增加区块数"
             />
             <input
               className="mt-1 rounded-full border border-black px-4 py-2"
@@ -131,7 +131,7 @@ export default function Countdown() {
               step={1}
               value={rateBlocksPerCkb}
               onInput={(e) => setRateBlocksPerCkb(e.currentTarget.value)}
-              placeholder="每 CKB 延长的块数（整数）"
+              placeholder="每 CKB 增加区块数（整数）"
             />
             <div className="text-xs text-gray-600 mt-1">
               预计 end_block: {estimatedEndBlock ? estimatedEndBlock.toString() : '-'}（基于当前 tip {tipNumber ? tipNumber.toString() : '-'}）
@@ -182,7 +182,7 @@ export default function Countdown() {
       </div>
 
       <div className="mt-4 p-4 border rounded-2xl">
-        <div className="font-semibold mb-2">延长 countdown cell</div>
+        <div className="font-semibold mb-2">Mint countdown cell</div>
         <div className="flex items-center">
           <div className="flex flex-col">
             <input
@@ -190,7 +190,7 @@ export default function Countdown() {
               type="text"
               value={addedCkb}
               onInput={(e) => setAddedCkb(e.currentTarget.value)}
-              placeholder="追加 CKB"
+              placeholder="追加 CKB 以 Mint"
             />
           </div>
           <Button
@@ -200,13 +200,13 @@ export default function Countdown() {
               if (!signer) return;
               try {
                 const txHash = await extendCountdownCell(signer, addedCkb);
-                setStatus(`延长成功: ${txHash}`);
+                setStatus(`Mint 成功: ${txHash}`);
                 void refreshState();
               } catch (e: any) {
-                setStatus(`延长失败: ${e?.message ?? String(e)}`);
+                setStatus(`Mint 失败: ${e?.message ?? String(e)}`);
               }
             }}
-          >延长</Button>
+          >Mint</Button>
         </div>
       </div>
 

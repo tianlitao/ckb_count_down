@@ -110,7 +110,7 @@ export default function SwapPage() {
   return (
     <>
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
-        <div className="max-w-screen-md mx-auto flex items-center justify-between px-4 py-3">
+        <div className="max-w-screen-xl mx-auto flex items-center justify-between px-4 md:px-6 py-3">
           <div className="flex items-center gap-4">
             <Link href="/" className="font-bold text-2xl md:text-3xl tracking-tight no-underline">FairLaunchCell</Link>
             <nav className="flex items-center gap-4 md:gap-6 text-base md:text-lg">
@@ -125,7 +125,7 @@ export default function SwapPage() {
         </div>
       </header>
 
-      <main className="max-w-screen-md mx-auto px-4 py-6">
+      <main className="max-w-screen-xl mx-auto px-4 md:px-6 py-6">
         <div className="flex items-center justify-between mb-4">
           <div className="text-xl font-semibold">兑换 Swap（到期后）</div>
           <div className="text-sm text-gray-600">{isExpired ? '已到期' : '未到期'}</div>

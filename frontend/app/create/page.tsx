@@ -94,7 +94,7 @@ export default function CreatePage() {
   return (
     <>
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
-        <div className="max-w-screen-md mx-auto flex items-center justify-between px-4 py-3">
+        <div className="max-w-screen-xl mx-auto flex items-center justify-between px-4 md:px-6 py-3">
           <div className="flex items-center gap-4">
             <Link href="/" className="font-bold text-2xl md:text-3xl tracking-tight no-underline">FairLaunchCell</Link>
             <nav className="flex items-center gap-4 md:gap-6 text-base md:text-lg">
@@ -109,7 +109,7 @@ export default function CreatePage() {
         </div>
       </header>
 
-      <main className="max-w-screen-md mx-auto px-4 py-6">
+      <main className="max-w-screen-xl mx-auto px-4 md:px-6 py-6">
         <div className="text-xl font-semibold mb-2">创建 FairLaunch Cell</div>
         <div className="mb-4 text-sm text-gray-600">
           提示：本流程使用一次性密封（SingleUseLock），创建将分三步执行（锚点、SUS owner、铸造），因此需要连续签名三次。
@@ -133,7 +133,7 @@ export default function CreatePage() {
               />
             </label>
             <label className="flex flex-col text-sm">
-              <span className="mb-1">每 CKB 延长的块数（整数）</span>
+              <span className="mb-1">每 CKB 增加区块数（整数）</span>
               <input
                 className="rounded-full border px-4 py-2"
                 type="number"

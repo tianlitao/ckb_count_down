@@ -491,7 +491,7 @@ export async function extendCountdownCell(
   const outCapacityStr = (Number(inCapacityStr) + Number(addedCkb)).toString();
   const outCapacity = ccc.fixedPointFrom(outCapacityStr);
   if (outCapacity < requiredPoolCap) {
-    throw new Error(`延长后容量不足，至少需要 ${ccc.fixedPointToString(requiredPoolCap)} CKB（锁+type+数据）`);
+    throw new Error(`Mint 后容量不足，至少需要 ${ccc.fixedPointToString(requiredPoolCap)} CKB（锁+type+数据）`);
   }
 
   const outputs: ccc.CellOutputLike[] = [
@@ -548,7 +548,7 @@ export async function extendSpecificCountdownCell(
   const base = (BigInt(number) > stateIn.endBlock ? BigInt(number) : stateIn.endBlock);
   const extBlocks = (addedShannons / SHANNONS_PER_CKB) * BigInt(stateIn.rateBlocksPerCkb);
   const endOut = base + extBlocks;
-  // 单笔延长（指定 cell）：从池分发 XUDT 到钱包（不增发），池保持至少 minPoolXudt
+  // 单笔 Mint（指定 cell）：从池分发 XUDT 到钱包（不增发），池保持至少 minPoolXudt
   const toU128LEHex = (n: bigint): string => {
     if (n < BigInt(0)) throw new Error('negative not supported for u128');
     const hex = n.toString(16).padStart(32, '0');
@@ -585,7 +585,7 @@ export async function extendSpecificCountdownCell(
   const input = ccc.CellInput.from({ previousOutput: cell.outPoint });
   const outCapacity = ccc.fixedPointFrom((Number(ccc.fixedPointToString(cell.cellOutput.capacity)) + Number(addedCkb)).toString());
   if (outCapacity < requiredPoolCap) {
-    throw new Error(`延长后容量不足，至少需要 ${ccc.fixedPointToString(requiredPoolCap)} CKB（锁+type+数据）`);
+    throw new Error(`Mint 后容量不足，至少需要 ${ccc.fixedPointToString(requiredPoolCap)} CKB（锁+type+数据）`);
   }
 
   const outputs: ccc.CellOutputLike[] = [
