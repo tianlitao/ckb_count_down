@@ -28,5 +28,17 @@ export const UDT_CONFIG: Record<`0x${string}`, UdtInfo> = {
     symbol: 'FLC',
     amount: '10000000',
   },
+  '0x0266f19836fff80df7a3af5ef347de10e474c29b70de8fe5ba7c1bc52c99bce2': {
+    decimal: 8,
+    name: '',
+    symbol: 'TALK',
+    amount: '10000000',
+  },
+  '0x1de9b4d0ac698604d4e8d4bfc72188bc3928924f0b98581123fca00bed6f754a': {
+    decimal: 8,
+    name: '',
+    symbol: 'DAO',
+    amount: '100000000',
+  },
 
 };

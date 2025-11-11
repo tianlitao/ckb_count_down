@@ -38,7 +38,13 @@ export default function Home() {
       const th = it.cell?.cellOutput?.type ? scriptToHash(it.cell.cellOutput.type) : null;
       if (th && flTypeHashes.has(th as `0x${string}`)) pinned.push(it); else others.push(it);
     }
-    return [...pinned, ...others];
+    const sortedOthers = others.slice().sort((a, b) => {
+      const ea = a.state.endBlock;
+      const eb = b.state.endBlock;
+      if (ea === eb) return 0;
+      return ea > eb ? -1 : 1;
+    });
+    return [...pinned, ...sortedOthers];
   }, [items, flTypeHashes]);
 
   const refresh = async () => {
