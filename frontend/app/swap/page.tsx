@@ -112,11 +112,16 @@ export default function SwapPage() {
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
         <div className="max-w-screen-xl mx-auto flex items-center justify-between px-4 md:px-6 py-3">
           <div className="flex items-center gap-4">
-            <Link href="/" className="font-bold text-2xl md:text-3xl tracking-tight no-underline">FairLaunchCell</Link>
+  <Link
+    href="/"
+    className="font-bold text-2xl md:text-3xl tracking-tight no-underline bg-gradient-to-r from-cyan-400 via-fuchsia-500 to-indigo-500 bg-clip-text text-transparent drop-shadow-[0_0_18px_rgba(0,255,255,0.25)]"
+  >
+    FairLaunchCell
+  </Link>
             <nav className="flex items-center gap-4 md:gap-6 text-base md:text-lg">
-              <Link href="/" className="hover:underline">首页</Link>
-              <Link href="/create" className="hover:underline">创建</Link>
-              <Link href="/about" className="hover:underline">关于</Link>
+  <Link href="/" className="no-underline hover:no-underline transition-colors hover:text-cyan-300">首页</Link>
+  <Link href="/create" className="no-underline hover:no-underline transition-colors hover:text-cyan-300">创建</Link>
+  <Link href="/about" className="no-underline hover:no-underline transition-colors hover:text-cyan-300">关于</Link>
             </nav>
           </div>
           <div>

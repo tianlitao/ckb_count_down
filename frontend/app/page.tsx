@@ -5,7 +5,7 @@ import { ccc } from '@ckb-ccc/connector-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import Wallet from './wallet';
-import { listCountdownCells, extendSpecificCountdownCell, decodeCountdownState } from './countdown-actions';
+import { listCountdownCells, extendSpecificCountdownCell, decodeCountdownState, swapCkbForXudt, swapXudtForCkb } from './countdown-actions';
 import { scriptToHash } from '@nervosnetwork/ckb-sdk-utils';
 import { UDT_CONFIG } from '../src/udt-config';
 
@@ -25,6 +25,11 @@ export default function Home() {
   const [mintOpen, setMintOpen] = useState<boolean>(false);
   const [mintTarget, setMintTarget] = useState<{ cell: any; state: ReturnType<typeof decodeCountdownState> } | null>(null);
   const [mintBlocks, setMintBlocks] = useState<number>(0);
+  // Swap 弹窗状态
+  const [swapOpen, setSwapOpen] = useState<boolean>(false);
+  const [swapTarget, setSwapTarget] = useState<{ cell: any; state: ReturnType<typeof decodeCountdownState> } | null>(null);
+  const [ckbIn, setCkbIn] = useState<string>('1');
+  const [xudtIn, setXudtIn] = useState<string>('0');
   // 移除“最后付款人”解析与展示逻辑
 
   // 将 FairLaunchCell（symbol=FLC 的 xUDT）置顶显示
@@ -119,6 +124,20 @@ export default function Home() {
     if (d > 0) return `${d}天 ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
+  // 将带小数的字符串（人类单位）转换为原子单位（u128 BigInt）
+  function decimalStrToAtomicBigInt(input: string, decimals: number): bigint {
+    const s = (input || '').trim();
+    if (!s) return BigInt(0);
+    if (!/^\d*(?:\.\d*)?$/.test(s)) throw new Error('数值格式错误');
+    const [intStr, fracRaw = ''] = s.split('.');
+    const d = Math.max(0, decimals | 0);
+    let base = BigInt(1);
+    for (let i = 0; i < d; i++) base *= BigInt(10);
+    const intPart = intStr ? BigInt(intStr) : BigInt(0);
+    const fracPadded = (fracRaw || '').slice(0, d).padEnd(d, '0');
+    const fracPart = fracPadded ? BigInt(fracPadded) : BigInt(0);
+    return intPart * base + fracPart;
+  }
   // 将原子单位（u128）按默认 decimals 展示为人类可读（默认 8 位）
   const formatU128Display = (val: bigint, decimals: number = 8) => {
     const d = Math.max(0, decimals | 0);
@@ -129,6 +148,16 @@ export default function Home() {
     const frac = fracRaw.replace(/0+$/, '');
     return frac.length ? `${intPart}.${frac}` : intPart;
   };
+
+  // 简易 Token 头像（首字母圆形）
+  function TokenAvatar({ symbol }: { symbol?: string }) {
+    const letter = (symbol?.[0] ?? 'T').toUpperCase();
+    return (
+      <div className="h-6 w-6 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 text-white flex items-center justify-center text-xs font-bold shadow-sm">
+        {letter}
+      </div>
+    );
+  }
 
   // 保留两位小数的格式化（字符串）
   const formatDecimalStrToFixed2 = (s: string) => {
@@ -178,6 +207,31 @@ export default function Home() {
     return BigInt('0x' + be);
   };
 
+  // Swap 预估（仅展示）
+  const swapPreview = useMemo(() => {
+    if (!swapTarget) return null;
+    const cell = swapTarget.cell;
+    const typeHash = cell?.cellOutput?.type ? scriptToHash(cell.cellOutput.type) as `0x${string}` : undefined;
+    const tokenDecimals = (typeHash ? UDT_CONFIG[typeHash]?.decimal : undefined) ?? 8;
+    const x_in_ckb_str = ccc.fixedPointToString(cell.cellOutput.capacity);
+    const x_in = BigInt(ccc.fixedPointFrom(x_in_ckb_str));
+    const y_in_hex = cell.outputData as string;
+    const clean = y_in_hex.startsWith('0x') ? y_in_hex.slice(2) : y_in_hex;
+    const be = clean.match(/../g)?.reverse().join('') ?? '0'.repeat(32);
+    const y_in = BigInt('0x' + be);
+    // ckb -> xudt
+    const dx = BigInt(ccc.fixedPointFrom(ckbIn || '0'));
+    const x_out1 = x_in + (dx > BigInt(0) ? dx : BigInt(0));
+    const y_out1 = x_out1 > BigInt(0) ? (x_in * y_in) / x_out1 : y_in;
+    const userXudt = y_in > y_out1 ? y_in - y_out1 : BigInt(0);
+    // xudt -> ckb
+    const dy = decimalStrToAtomicBigInt(xudtIn || '0', tokenDecimals);
+    const y_out2 = y_in + (dy > BigInt(0) ? dy : BigInt(0));
+    const x_out2 = y_out2 > BigInt(0) ? (x_in * y_in) / y_out2 : x_in;
+    const userCkbShannons = x_in > x_out2 ? x_in - x_out2 : BigInt(0);
+    return { x_in, y_in, x_out1, y_out1, userXudt, x_out2, y_out2, userCkbShannons, tokenDecimals };
+  }, [swapTarget, ckbIn, xudtIn]);
+
   // 当前弹窗目标可分发的最大区块数（受池余额与 minPoolXudt 限制）
   const mintMaxBlocks = useMemo(() => {
     if (!mintTarget) return 0;
@@ -219,11 +273,16 @@ export default function Home() {
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
         <div className="max-w-screen-xl mx-auto flex items-center justify-between px-4 md:px-6 py-3">
           <div className="flex items-center gap-4">
-            <Link href="/" className="font-bold text-2xl md:text-3xl tracking-tight no-underline">FairLaunchCell</Link>
+            <Link
+              href="/"
+              className="font-bold text-2xl md:text-3xl tracking-tight no-underline bg-gradient-to-r from-cyan-400 via-fuchsia-500 to-indigo-500 bg-clip-text text-transparent drop-shadow-[0_0_18px_rgba(0,255,255,0.25)]"
+            >
+              FairLaunchCell
+            </Link>
             <nav className="flex items-center gap-4 md:gap-6 text-base md:text-lg">
-              <Link href="/" className="hover:underline">首页</Link>
-              <Link href="/create" className="hover:underline">创建</Link>
-              <Link href="/about" className="hover:underline">关于</Link>
+              <Link href="/" className="no-underline hover:no-underline transition-colors hover:text-cyan-300">首页</Link>
+              <Link href="/create" className="no-underline hover:no-underline transition-colors hover:text-cyan-300">创建</Link>
+              <Link href="/about" className="no-underline hover:no-underline transition-colors hover:text-cyan-300">关于</Link>
             </nav>
           </div>
           <div>
@@ -239,20 +298,24 @@ export default function Home() {
         </div>
         <div className="text-sm text-gray-600 mb-2">当前区块: {tipNumber ? tipNumber.toString() : '-'}</div>
 
-        {status ? <div className="mb-2 text-red-600 break-all">{status}</div> : null}
+        {status ? (
+          <div className="mb-2 px-3 py-2 rounded-xl border bg-white/70 backdrop-blur break-all shadow-sm">
+            {status}
+          </div>
+        ) : null}
 
         <div className="overflow-x-auto">
           {sortedItems.length === 0 ? (
             <div className="text-sm text-gray-500">暂无数据</div>
           ) : (
-            <table className="w-full text-sm border rounded-2xl overflow-hidden">
-              <thead className="bg-gray-50">
+            <table className="w-full text-sm border rounded-2xl overflow-hidden bg-white/70 backdrop-blur shadow-sm">
+              <thead className="bg-gray-50/80">
                 <tr className="text-left">
                   <th className="px-3 py-2">Token</th>
                   <th className="px-3 py-2">结束区块</th>
                   <th className="px-3 py-2">倒计时</th>
-                  <th className="px-3 py-2">每块铸币</th>
-                  <th className="px-3 py-2">池最低</th>
+                  <th className="px-3 py-2 text-right">每块铸币</th>
+                  <th className="px-3 py-2 text-right">池最低</th>
                   {/* <th className="px-3 py-2">每 CKB 增块</th> */}
                   {/* <th className="px-3 py-2">最小追加</th> */}
                   <th className="px-3 py-2">池子(CKB)/(XUDT)</th>
@@ -271,18 +334,18 @@ export default function Home() {
                   const displaySymbol = udt?.symbol ?? 'XUDT';
                   const displayDecimals = udt?.decimal;
                   return (
-                    <tr key={key} className={`${isPinned ? 'bg-red-50' : ''}`}>
+                    <tr key={key} className={`${isPinned ? 'bg-red-50' : ''} hover:bg-gray-50 transition-colors`}>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-2">
-
+                          <TokenAvatar symbol={displaySymbol} />
                           {typeHash ? (
                             <a
                               href={`https://testnet.explorer.nervos.org/xudt/${typeHash}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-xs text-blue-600 hover:underline"
-                            ><span className="font-medium">{displaySymbol}</span></a>
-                          ) : <span className="font-medium">{displaySymbol}</span>}
+                              className="font-semibold hover:underline"
+                            >{displaySymbol}</a>
+                          ) : <span className="font-semibold">{displaySymbol}</span>}
                           {isPinned ? (
                             <span className="px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700 border border-red-300">置顶</span>
                           ) : null}
@@ -290,12 +353,12 @@ export default function Home() {
                         <div className="text-[10px] text-gray-500">{key}</div>
                       </td>
                       <td className="px-3 py-2">{state.endBlock.toString()}</td>
-                      <td className="px-3 py-2">{tipNumber != null ? formatDuration(countdownSec) : '-'}</td>
-                      <td className="px-3 py-2">{formatU128Display(state.xudtPerBlock, displayDecimals)} {displaySymbol}</td>
-                      <td className="px-3 py-2">{formatU128Display(state.minPoolXudt, displayDecimals)} {displaySymbol}</td>
+                      <td className="px-3 py-2">{tipNumber != null ? ((expired || countdownSec <= 0) ? 'Mint完成' : formatDuration(countdownSec)) : '-'}</td>
+                      <td className="px-3 py-2 text-right">{formatU128Display(state.xudtPerBlock, displayDecimals)} {displaySymbol}</td>
+                      <td className="px-3 py-2 text-right">{formatU128Display(state.minPoolXudt, displayDecimals)} {displaySymbol}</td>
                       {/* <td className="px-3 py-2">{state.rateBlocksPerCkb}</td> */}
                       {/* <td className="px-3 py-2">{ccc.fixedPointToString(state.minAddShannons)} CKB</td> */}
-                      <td className="px-3 py-2">{formatToFixed2DecimalStr(cell.cellOutput.capacity as bigint, 8)}/{formatToFixed2DecimalStr(fromU128LEHex(cell.outputData as string), (displayDecimals ?? 8))}</td>
+                      <td className="px-3 py-2 text-right">{formatToFixed2DecimalStr(cell.cellOutput.capacity as bigint, 8)}/{formatToFixed2DecimalStr(fromU128LEHex(cell.outputData as string), (displayDecimals ?? 8))}</td>
                       <td className="px-3 py-2 text-right">
                         {!expired ? (
                           <button
@@ -311,10 +374,16 @@ export default function Home() {
                             }}
                           >Mint</button>
                         ) : (
-                          <Link
-                            className="rounded-full border px-4 py-1 text-sm"
-                            href={`/swap?txHash=${cell.outPoint.txHash}&index=${cell.outPoint.index}`}
-                          >Swap</Link>
+                          <button
+                            className="rounded-full bg-cyan-600/90 hover:bg-cyan-500 text-white px-4 py-1 text-sm disabled:opacity-50 shadow-[0_0_30px_-10px_rgba(0,255,255,0.5)] ring-1 ring-cyan-400/40"
+                            disabled={!signer}
+                            onClick={() => {
+                              setSwapTarget({ cell, state });
+                              setCkbIn('1');
+                              setXudtIn('0');
+                              setSwapOpen(true);
+                            }}
+                          >Swap</button>
                         )}
                       </td>
                     </tr>
@@ -400,6 +469,115 @@ export default function Home() {
                   }
                 }}
               >确认 Mint</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Swap 弹窗 */}
+      {swapOpen && swapTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-lg w-[90%] max-w-md p-4">
+            <div className="flex items-center justify-between">
+              <div className="font-semibold">Swap</div>
+              <button className="text-sm px-2 py-1" onClick={() => setSwapOpen(false)}>关闭</button>
+            </div>
+            <div className="mt-3 space-y-4 text-sm">
+              <div>
+                <div className="font-semibold mb-2">用 CKB 兑换 {(swapTarget.cell?.cellOutput?.type ? (UDT_CONFIG[scriptToHash(swapTarget.cell.cellOutput.type) as `0x${string}`]?.symbol ?? 'XUDT') : 'XUDT')}</div>
+                <div className="flex items-center gap-2">
+                  <input
+                    className="rounded-full border px-3 py-1 text-sm"
+                    placeholder="输入 CKB"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    value={ckbIn}
+                    onInput={(e) => setCkbIn(e.currentTarget.value.replace(/[^0-9.]/g, ''))}
+                  />
+                  <button
+                    className="rounded-full bg-cyan-600/90 hover:bg-cyan-500 text-white px-4 py-1 text-sm disabled:opacity-50 shadow-[0_0_30px_-10px_rgba(0,255,255,0.5)] ring-1 ring-cyan-400/40"
+                    disabled={!signer}
+                    onClick={async () => {
+                      if (!signer || !swapTarget) return;
+                      setStatus('');
+                      try {
+                        const txHash = await swapCkbForXudt(signer, swapTarget.cell, ckbIn || '0');
+                        setStatus(
+                          <span>
+                            Swap 成功: {""}
+                            <a
+                              href={`https://testnet.explorer.nervos.org/transaction/${txHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline text-blue-600"
+                            >{txHash}</a>
+                          </span>
+                        );
+                        setSwapOpen(false);
+                        setSwapTarget(null);
+                        void refresh();
+                      } catch (e: any) {
+                        setStatus(`Swap 失败: ${e?.message ?? String(e)}`);
+                      }
+                    }}
+                  >兑换</button>
+                </div>
+                <div className="text-xs text-gray-600 mt-2">
+                  预计获得 {(swapTarget.cell?.cellOutput?.type ? (UDT_CONFIG[scriptToHash(swapTarget.cell.cellOutput.type) as `0x${string}`]?.symbol ?? 'XUDT') : 'XUDT')}: {formatU128Display(swapPreview?.userXudt ?? BigInt(0), swapPreview?.tokenDecimals ?? 8)}
+                </div>
+              </div>
+
+              <div>
+                <div className="font-semibold mb-2">用 {(swapTarget.cell?.cellOutput?.type ? (UDT_CONFIG[scriptToHash(swapTarget.cell.cellOutput.type) as `0x${string}`]?.symbol ?? 'XUDT') : 'XUDT')} 兑换 CKB</div>
+                <div className="flex items-center gap-2">
+                  <input
+                    className="rounded-full border px-3 py-1 text-sm"
+                    placeholder={`输入 ${(swapTarget.cell?.cellOutput?.type ? (UDT_CONFIG[scriptToHash(swapTarget.cell.cellOutput.type) as `0x${string}`]?.symbol ?? 'XUDT') : 'XUDT')}（按 ${(swapTarget.cell?.cellOutput?.type ? (UDT_CONFIG[scriptToHash(swapTarget.cell.cellOutput.type) as `0x${string}`]?.decimal ?? 8) : 8)} 小数)`}
+                    type="text"
+                    inputMode="numeric"
+                    min={0}
+                    step="any"
+                    value={xudtIn}
+                    onInput={(e) => setXudtIn(e.currentTarget.value.replace(/[^0-9.]/g, ''))}
+                  />
+                  <button
+                    className="rounded-full bg-cyan-600/90 hover:bg-cyan-500 text-white px-4 py-1 text-sm disabled:opacity-50 shadow-[0_0_30px_-10px_rgba(0,255,255,0.5)] ring-1 ring-cyan-400/40"
+                    disabled={!signer}
+                    onClick={async () => {
+                      if (!signer || !swapTarget) return;
+                      setStatus('');
+                      try {
+                        const txHash = await swapXudtForCkb(signer, swapTarget.cell, xudtIn || '0');
+                        setStatus(
+                          <span>
+                            Swap 成功: {""}
+                            <a
+                              href={`https://testnet.explorer.nervos.org/transaction/${txHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline text-blue-600"
+                            >{txHash}</a>
+                          </span>
+                        );
+                        setSwapOpen(false);
+                        setSwapTarget(null);
+                        void refresh();
+                      } catch (e: any) {
+                        setStatus(`Swap 失败: ${e?.message ?? String(e)}`);
+                      }
+                    }}
+                  >兑换</button>
+                </div>
+                <div className="text-xs text-gray-600 mt-2">
+                  预计获得 CKB: {ccc.fixedPointToString(swapPreview?.userCkbShannons ?? BigInt(0))}
+                </div>
+              </div>
+
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button className="rounded-full border px-4 py-2" onClick={() => setSwapOpen(false)}>取消</button>
             </div>
           </div>
         </div>

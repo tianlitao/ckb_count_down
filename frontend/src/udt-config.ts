@@ -40,5 +40,11 @@ export const UDT_CONFIG: Record<`0x${string}`, UdtInfo> = {
     symbol: 'DAO',
     amount: '100000000',
   },
+  '0x34720be45c087b68946e2e239a96376d2fbb889a72f7e3bd3282c50956ea4dad': {
+    decimal: 8,
+    name: '',
+    symbol: 'UFO',
+    amount: '10000000',
+  },
 
 };
