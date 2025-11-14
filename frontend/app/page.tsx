@@ -315,10 +315,10 @@ export default function Home() {
                   <th className="px-3 py-2">结束区块</th>
                   <th className="px-3 py-2">倒计时</th>
                   <th className="px-3 py-2 text-right">每块铸币</th>
-                  <th className="px-3 py-2 text-right">池最低</th>
+                  {/* <th className="px-3 py-2 text-right">池最低</th> */}
                   {/* <th className="px-3 py-2">每 CKB 增块</th> */}
                   {/* <th className="px-3 py-2">最小追加</th> */}
-                  <th className="px-3 py-2">池子(CKB)/(XUDT)</th>
+                  <th className="px-3 py-2">价格(CKB)</th>
                   <th className="px-3 py-2 text-right">操作</th>
                 </tr>
               </thead>
@@ -355,10 +355,18 @@ export default function Home() {
                       <td className="px-3 py-2">{state.endBlock.toString()}</td>
                       <td className="px-3 py-2">{tipNumber != null ? ((expired || countdownSec <= 0) ? 'Mint完成' : formatDuration(countdownSec)) : '-'}</td>
                       <td className="px-3 py-2 text-right">{formatU128Display(state.xudtPerBlock, displayDecimals)} {displaySymbol}</td>
-                      <td className="px-3 py-2 text-right">{formatU128Display(state.minPoolXudt, displayDecimals)} {displaySymbol}</td>
+                      {/* <td className="px-3 py-2 text-right">{formatU128Display(state.minPoolXudt, displayDecimals)} {displaySymbol}</td> */}
                       {/* <td className="px-3 py-2">{state.rateBlocksPerCkb}</td> */}
                       {/* <td className="px-3 py-2">{ccc.fixedPointToString(state.minAddShannons)} CKB</td> */}
-                      <td className="px-3 py-2 text-right">{formatToFixed2DecimalStr(cell.cellOutput.capacity as bigint, 8)}/{formatToFixed2DecimalStr(fromU128LEHex(cell.outputData as string), (displayDecimals ?? 8))}</td>
+                      <td className="px-3 py-2 text-right">{(() => {
+                        const amt = fromU128LEHex(cell.outputData as string);
+                        const d = displayDecimals ?? 8;
+                        let base = BigInt(1);
+                        for (let i = 0; i < d; i++) base *= BigInt(10);
+                        if (amt <= BigInt(0)) return '-';
+                        const shannonsPerUnit = ((cell.cellOutput.capacity as bigint) * base) / amt;
+                        return formatU128Display(shannonsPerUnit, 8);
+                      })()}</td>
                       <td className="px-3 py-2 text-right">
                         {!expired ? (
                           <button

@@ -122,6 +122,14 @@ export async function getCountdownCellDeps(client: ccc.Client): Promise<ccc.Cell
   return client.getCellDeps(s.cellDeps);
 }
 
+export async function getAlwaysSuccessCellDeps(client: ccc.Client): Promise<ccc.CellDep[]> {
+  const sMy = offckb.myScripts['always_success'];
+  const sSys = offckb.systemScripts.always_success?.script;
+  const s = sMy ?? sSys;
+  if (!s) throw new Error('always_success script not found in offckb config');
+  return client.getCellDeps(s.cellDeps);
+}
+
 function scriptEq(a: any, b: any): boolean {
   return !!a && !!b && a.codeHash?.toLowerCase() === b.codeHash?.toLowerCase() && a.hashType === b.hashType;
 }
