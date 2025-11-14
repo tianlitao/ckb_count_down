@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ccc } from '@ckb-ccc/connector-react';
 import Wallet from '../wallet';
-import { createCountdownCell } from '../countdown-actions';
+import { createAuctionCell } from '../countdown-actions';
 
 export default function CreatePage() {
   const signer = ccc.useSigner();
@@ -14,8 +14,8 @@ export default function CreatePage() {
   const [tipNumber, setTipNumber] = useState<bigint | null>(null);
 
   const [capacityCkb, setCapacityCkb] = useState<string>('150');
-  const [rateBlocksPerCkb, setRateBlocksPerCkb] = useState<string>('1');
-  const [minAddCkb, setMinAddCkb] = useState<string>('1');
+  const [endBlock, setEndBlock] = useState<string>('0');
+  const [priceStepCkb, setPriceStepCkb] = useState<string>('1');
 
   useEffect(() => {
     const run = async () => {
@@ -30,16 +30,14 @@ export default function CreatePage() {
     void run();
   }, [client]);
 
-  const estimatedEndBlock = tipNumber != null
-    ? (tipNumber + ((BigInt(ccc.fixedPointFrom(capacityCkb || '0')) / BigInt(100000000)) * BigInt(Number(rateBlocksPerCkb || '0'))))
-    : null;
+  const estimatedEndBlock = null;
 
   return (
     <>
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
         <div className="max-w-screen-md mx-auto flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-4">
-            <Link href="/" className="font-bold text-2xl md:text-3xl tracking-tight no-underline">CountdownCell</Link>
+            <Link href="/" className="font-bold text-2xl md:text-3xl tracking-tight no-underline">AuctionCell</Link>
             <nav className="flex items-center gap-4 md:gap-6 text-base md:text-lg">
               <Link href="/" className="hover:underline">首页</Link>
               <Link href="/create" className="hover:underline">创建</Link>
@@ -53,7 +51,7 @@ export default function CreatePage() {
       </header>
 
       <main className="max-w-screen-md mx-auto px-4 py-6">
-        <div className="text-xl font-semibold mb-4">创建 countdown cell</div>
+        <div className="text-xl font-semibold mb-4">创建 auction cell</div>
 
         {status ? <div className="mb-2 text-red-600 break-all">{status}</div> : null}
 
@@ -73,34 +71,34 @@ export default function CreatePage() {
               />
             </label>
             <label className="flex flex-col text-sm">
-              <span className="mb-1">每 CKB 延长的块数（整数）</span>
-              <input
-                className="rounded-full border px-4 py-2"
-                type="number"
-                inputMode="numeric"
-                min={0}
-                step={1}
-                value={rateBlocksPerCkb}
-                onInput={(e) => setRateBlocksPerCkb(e.currentTarget.value)}
-                placeholder="速率"
-              />
-            </label>
-            <label className="flex flex-col text-sm">
-              <span className="mb-1">最小追加 CKB</span>
+              <span className="mb-1">距离截止的区块数</span>
               <input
                 className="rounded-full border px-4 py-2"
                 type="number"
                 inputMode="numeric"
                 min={1}
                 step={1}
-                value={minAddCkb}
-                onInput={(e) => setMinAddCkb(e.currentTarget.value)}
-                placeholder="最小追加"
+                value={endBlock}
+                onInput={(e) => setEndBlock(e.currentTarget.value)}
+                placeholder="距离截止的区块数"
+              />
+            </label>
+            <label className="flex flex-col text-sm">
+              <span className="mb-1">加价步长 CKB</span>
+              <input
+                className="rounded-full border px-4 py-2"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                step={1}
+                value={priceStepCkb}
+                onInput={(e) => setPriceStepCkb(e.currentTarget.value)}
+                placeholder="加价步长"
               />
             </label>
           </div>
           <div className="text-xs text-gray-600 mt-2">
-            当前 tip: {tipNumber ? tipNumber.toString() : '-'}；预计 end_block: {estimatedEndBlock ? estimatedEndBlock.toString() : '-'}
+            当前 tip: {tipNumber ? tipNumber.toString() : '-'}；预计 end_block: {tipNumber != null ? (tipNumber + BigInt(Number(endBlock || '0'))).toString() : '-'}
           </div>
           <div className="mt-3">
             <button
@@ -108,16 +106,14 @@ export default function CreatePage() {
               disabled={!signer}
               onClick={async () => {
                 if (!signer) return;
-                try {
-                  const txHash = await createCountdownCell(signer, {
-                    capacityCkb,
-                    rateBlocksPerCkb: Number(rateBlocksPerCkb),
-                    minAddCkb,
-                  });
-                  setStatus(`创建成功: ${txHash}`);
-                } catch (e: any) {
-                  setStatus(`创建失败: ${e?.message ?? String(e)}`);
-                }
+              try {
+                const hdr = await client!.getTipHeader();
+                const finalEndBlock = (BigInt(hdr.number) + BigInt(Number(endBlock || '0'))).toString();
+                const txHash = await createAuctionCell(signer, { capacityCkb, endBlock: finalEndBlock, priceStepCkb });
+                setStatus(`创建成功: ${txHash}`);
+              } catch (e: any) {
+                setStatus(`创建失败: ${e?.message ?? String(e)}`);
+              }
               }}
             >创建</button>
           </div>

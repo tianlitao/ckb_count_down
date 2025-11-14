@@ -3,11 +3,11 @@
 import React, { useEffect, useState } from 'react';
 import { ccc } from '@ckb-ccc/connector-react';
 import {
-  createCountdownCell,
-  extendCountdownCell,
-  closeCountdownCell,
-  findActiveCountdownCell,
-  decodeCountdownState,
+  createAuctionCell,
+  bidAuctionCell,
+  claimAuctionCell,
+  findActiveAuctionCell,
+  decodeAuctionArgs,
 } from './countdown-actions';
 
 function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -24,12 +24,12 @@ export default function Countdown() {
   const { client } = ccc.useCcc();
 
   const [status, setStatus] = useState<string>('');
-  const [state, setState] = useState<ReturnType<typeof decodeCountdownState> | null>(null);
+  const [state, setState] = useState<ReturnType<typeof decodeAuctionArgs> | null>(null);
 
   // create params
   const [capacityCkb, setCapacityCkb] = useState<string>('150');
-  const [rateBlocksPerCkb, setRateBlocksPerCkb] = useState<string>('100');
-  const [minAddCkb, setMinAddCkb] = useState<string>('1');
+  const [endBlock, setEndBlock] = useState<string>('0');
+  const [priceStepCkb, setPriceStepCkb] = useState<string>('1');
   const [tipNumber, setTipNumber] = useState<bigint | null>(null);
 
   // extend params
@@ -44,14 +44,14 @@ export default function Countdown() {
     } catch (_e) {
       setTipNumber(null);
     }
-    const cell = await findActiveCountdownCell(client);
+    const cell = await findActiveAuctionCell(client);
     if (!cell) {
       setState(null);
       setStatus('未找到 countdown cell');
       return;
     }
     try {
-      const s = decodeCountdownState(cell.outputData);
+      const s = decodeAuctionArgs((cell as any).cellOutput.lock.args);
       setState(s);
     } catch (e: any) {
       setStatus(`解析状态失败: ${e?.message ?? String(e)}`);
@@ -59,9 +59,7 @@ export default function Countdown() {
   };
 
   // 预计结束区块预览（不用于链上，仅供参考）
-  const estimatedEndBlock = tipNumber != null
-    ? (tipNumber + ((BigInt(ccc.fixedPointFrom(capacityCkb || '0')) / BigInt(100000000)) * BigInt(Number(rateBlocksPerCkb || '0'))))
-    : null;
+  const estimatedEndBlock = null;
 
   useEffect(() => {
     void refreshState();
@@ -70,7 +68,7 @@ export default function Countdown() {
 
   return (
     <div className="my-6">
-      <div className="text-xl font-semibold my-2">Countdown 合约操作</div>
+      <div className="text-xl font-semibold my-2">竞价拍卖 合约操作</div>
 
       <div className="mb-2">
         <Button onClick={refreshState} disabled={!client}>刷新合约状态</Button>
@@ -78,11 +76,10 @@ export default function Countdown() {
 
       {state ? (
         <div className="mb-4 text-sm">
-          <div>version: {state.version}</div>
           <div>end_block: {state.endBlock.toString()}</div>
-          <div>last_payer_lock_hash: {state.lastPayerLockHash}</div>
-          <div>rate_blocks_per_ckb: {state.rateBlocksPerCkb}</div>
-          <div>min_add_ckb: {ccc.fixedPointToString(state.minAddShannons)}</div>
+          <div>price_step_ckb: {ccc.fixedPointToString(state.priceStepShannons)}</div>
+          <div>bidder_lock_hash: {state.bidderLockHash}</div>
+          <div>current_bid_ckb: {ccc.fixedPointToString(state.bidShannons)}</div>
         </div>
       ) : (
         <div className="mb-4 text-sm">状态不可用（未创建或数据缺失）</div>
@@ -91,7 +88,7 @@ export default function Countdown() {
       {status ? <div className="mb-2 text-red-600 break-all">{status}</div> : null}
 
       <div className="mt-4 p-4 border rounded-2xl">
-        <div className="font-semibold mb-2">创建 countdown cell</div>
+        <div className="font-semibold mb-2">创建 auction cell</div>
         <div className="flex items-center">
           <div className="flex flex-col">
             <input
@@ -101,33 +98,19 @@ export default function Countdown() {
               onInput={(e) => setCapacityCkb(e.currentTarget.value)}
               placeholder="容量 CKB（至少 130）"
             />
-            {/* 合约公式：end_block = tip + floor(容量 CKB) * rate */}
             <input
               className="mt-1 rounded-full border border-black px-4 py-2"
               type="text"
-              value={rateBlocksPerCkb}
-              onInput={(e) => setRateBlocksPerCkb(e.currentTarget.value)}
-              placeholder="每 CKB 延长的块数"
+              value={endBlock}
+              onInput={(e) => setEndBlock(e.currentTarget.value)}
+              placeholder="距离截止的区块数"
             />
-            <input
-              className="mt-1 rounded-full border border-black px-4 py-2"
-              type="number"
-              inputMode="numeric"
-              min={0}
-              step={1}
-              value={rateBlocksPerCkb}
-              onInput={(e) => setRateBlocksPerCkb(e.currentTarget.value)}
-              placeholder="每 CKB 延长的块数（整数）"
-            />
-            <div className="text-xs text-gray-600 mt-1">
-              预计 end_block: {estimatedEndBlock ? estimatedEndBlock.toString() : '-'}（基于当前 tip {tipNumber ? tipNumber.toString() : '-'}）
-            </div>
             <input
               className="mt-1 rounded-full border border-black px-4 py-2"
               type="text"
-              value={minAddCkb}
-              onInput={(e) => setMinAddCkb(e.currentTarget.value)}
-              placeholder="最小追加 CKB"
+              value={priceStepCkb}
+              onInput={(e) => setPriceStepCkb(e.currentTarget.value)}
+              placeholder="加价步长 CKB"
             />
           </div>
           <Button
@@ -136,11 +119,9 @@ export default function Countdown() {
             onClick={async () => {
               if (!signer) return;
               try {
-                const txHash = await createCountdownCell(signer, {
-                  capacityCkb,
-                  rateBlocksPerCkb: Number(rateBlocksPerCkb),
-                  minAddCkb,
-                });
+                const hdr = await client!.getTipHeader();
+                const finalEndBlock = (BigInt(hdr.number) + BigInt(Number(endBlock || '0'))).toString();
+                const txHash = await createAuctionCell(signer, { capacityCkb, endBlock: finalEndBlock, priceStepCkb });
                 setStatus(`创建成功: ${txHash}`);
                 void refreshState();
               } catch (e: any) {
@@ -152,7 +133,7 @@ export default function Countdown() {
       </div>
 
       <div className="mt-4 p-4 border rounded-2xl">
-        <div className="font-semibold mb-2">延长 countdown cell</div>
+        <div className="font-semibold mb-2">出价 auction cell</div>
         <div className="flex items-center">
           <div className="flex flex-col">
             <input
@@ -160,7 +141,7 @@ export default function Countdown() {
               type="text"
               value={addedCkb}
               onInput={(e) => setAddedCkb(e.currentTarget.value)}
-              placeholder="追加 CKB"
+              placeholder="出价 CKB"
             />
           </div>
           <Button
@@ -169,33 +150,33 @@ export default function Countdown() {
             onClick={async () => {
               if (!signer) return;
               try {
-                const txHash = await extendCountdownCell(signer, addedCkb);
-                setStatus(`延长成功: ${txHash}`);
+                const txHash = await bidAuctionCell(signer, addedCkb);
+                setStatus(`出价成功: ${txHash}`);
                 void refreshState();
               } catch (e: any) {
-                setStatus(`延长失败: ${e?.message ?? String(e)}`);
+                setStatus(`出价失败: ${e?.message ?? String(e)}`);
               }
             }}
-          >延长</Button>
+          >出价</Button>
         </div>
       </div>
 
       <div className="mt-4 p-4 border rounded-2xl">
-        <div className="font-semibold mb-2">关闭 countdown cell</div>
+        <div className="font-semibold mb-2">领取 auction cell</div>
         <div className="flex items-center">
           <Button
             disabled={!signer}
             onClick={async () => {
               if (!signer) return;
               try {
-                const txHash = await closeCountdownCell(signer);
-                setStatus(`关闭成功: ${txHash}`);
+                const txHash = await claimAuctionCell(signer);
+                setStatus(`领取成功: ${txHash}`);
                 void refreshState();
               } catch (e: any) {
-                setStatus(`关闭失败: ${e?.message ?? String(e)}`);
+                setStatus(`领取失败: ${e?.message ?? String(e)}`);
               }
             }}
-          >关闭</Button>
+          >领取</Button>
         </div>
       </div>
     </div>
