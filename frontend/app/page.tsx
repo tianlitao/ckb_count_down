@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { ccc } from '@ckb-ccc/connector-react';
 import { useEffect, useMemo, useState } from 'react';
 import Wallet from './wallet';
-import { listCountdownCells, extendSpecificCountdownCell, decodeCountdownState, closeSpecificCountdownCell, resolveLastPayerAddress } from './countdown-actions';
+import { createLotteryBet, listLotteryCells, decodeLotteryBetData, settleLotteryMyWins, decodeCountdownState, getCellCreationBlockNumber, checkBetResultByTipHeader } from './countdown-actions';
 import { scriptToHash } from '@nervosnetwork/ckb-sdk-utils';
 
 export default function Home() {
@@ -12,34 +12,140 @@ export default function Home() {
   const { client } = ccc.useCcc();
 
   const [status, setStatus] = useState<string>('');
+  const [lotStatus, setLotStatus] = useState<string>('');
   const [page, setPage] = useState<number>(1);
   const [pageSize] = useState<number>(10);
   const [items, setItems] = useState<{ cell: any; state: ReturnType<typeof decodeCountdownState> }[]>([]);
   const [hasMore, setHasMore] = useState<boolean>(false);
   const [tipNumber, setTipNumber] = useState<bigint | null>(null);
+  const [tipHash, setTipHash] = useState<string | null>(null);
+  const [tipNibble, setTipNibble] = useState<number | null>(null);
+  const [betNibbles, setBetNibbles] = useState<Record<string, number | null>>({});
+  const [betTargetHashes, setBetTargetHashes] = useState<Record<string, string | null>>({});
+  const [betCreatedBlocks, setBetCreatedBlocks] = useState<Record<string, bigint | null>>({});
+  const [betTargetNumbers, setBetTargetNumbers] = useState<Record<string, bigint | null>>({});
   const [addedMap, setAddedMap] = useState<Record<string, string>>({});
   const [myLockHash, setMyLockHash] = useState<string | null>(null);
   const [myAddress, setMyAddress] = useState<string | null>(null);
   const [lastPayerAddrMap, setLastPayerAddrMap] = useState<Record<string, string | null>>({});
+  const [lotBets, setLotBets] = useState<any[]>([]);
+  const [lotPots, setLotPots] = useState<any[]>([]);
+  const [platformAddress] = useState<string>('ckt1qrfrwcdnvssswdwpn3s9v8fp87emat306ctjwsm3nmlkjg8qyza2cqgqq8zvwkzd4t6agl826lj7f5e04epyrs6u9ykejvss');
+  const [houseEdgeBp] = useState<number>(700);
+  const [confirmations] = useState<number>(1);
+  const [stakeCkb] = useState<string>('1000');
+  const [guess, setGuess] = useState<0 | 1>(0);
+
+  function formatErr(e: any): string {
+    try {
+      if (e == null) return '未知错误';
+      if (typeof e === 'string') return e;
+      if (typeof e === 'object') {
+        const d = (e as any).data;
+        if (typeof d === 'string' && d.length > 0) return d;
+        if ('message' in (e as any)) {
+          const m = (e as any).message;
+          if (typeof m === 'string' && m.length > 0) {
+            const lower = m.toLowerCase();
+            if (lower.includes('cannot read properties of undefined')) {
+              return '未知错误：错误对象不合法，请刷新页面或重试';
+            }
+            return m;
+          }
+        }
+      }
+      try { return JSON.stringify(e); } catch { return String(e); }
+    } catch { return String(e); }
+  }
+
+  const canSettle = useMemo(() => {
+    if (!myLockHash) return false;
+    let win = 0;
+    for (const c of lotBets) {
+      const key = `${c.outPoint.txHash}:${c.outPoint.index}`;
+      let info: any = null;
+      try { info = decodeLotteryBetData(c.outputData); } catch { continue; }
+      const nib = betNibbles[key];
+      const isWin = nib != null ? ((info.guess === 0 && nib < 8) || (info.guess === 1 && nib >= 8)) : null;
+      if (isWin && info.bettorLockHash.toLowerCase() === myLockHash.toLowerCase()) win++;
+    }
+    return win > 0;
+  }, [lotBets, betNibbles, myLockHash]);
 
   const refresh = async () => {
     if (!client) return;
     try {
       const header = await client.getTipHeader();
       setTipNumber(BigInt(header.number));
+      setTipHash(header.hash);
+      const nib = parseInt(header.hash.slice(-1), 16);
+      setTipNibble(Number.isNaN(nib) ? null : nib);
     } catch (_e) {
       setTipNumber(null);
+      setTipHash(null);
+      setTipNibble(null);
     }
-    const res = await listCountdownCells(client, page, pageSize);
-    setItems(res.items);
-    setHasMore(res.hasMore);
+    try {
+      const addr = await ccc.Address.fromString(platformAddress, client);
+      const ph = scriptToHash(addr.script) as `0x${string}`;
+      const lot = await listLotteryCells(client, { platformLockHash: ph, houseEdgeBp, confirmations }, 50);
+      setLotBets(lot.bets);
+      setLotPots(lot.pots);
+      const tipNum = BigInt((await client.getTipHeader()).number);
+      const pairsCreated = await Promise.all(lot.bets.map(async (c) => {
+        const key = `${c.outPoint.txHash}:${c.outPoint.index}`;
+        try {
+          const created = await getCellCreationBlockNumber(client, c);
+          return [key, created] as const;
+        } catch (_e) {
+          return [key, null] as const;
+        }
+      }));
+      setBetCreatedBlocks(Object.fromEntries(pairsCreated));
+
+      const pairsTarget = await Promise.all(lot.bets.map(async (c) => {
+        const key = `${c.outPoint.txHash}:${c.outPoint.index}`;
+        try {
+          const created = await getCellCreationBlockNumber(client, c);
+          if (created == null) return [key, null] as const;
+          return [key, created + BigInt(confirmations)] as const;
+        } catch (_e) {
+          return [key, null] as const;
+        }
+      }));
+      setBetTargetNumbers(Object.fromEntries(pairsTarget));
+
+      const pairsNib = await Promise.all(lot.bets.map(async (c) => {
+        const key = `${c.outPoint.txHash}:${c.outPoint.index}`;
+        try {
+          const r = await checkBetResultByTipHeader(client, c, { confirmations });
+          return [key, r.nibble] as const;
+        } catch (_e) {
+          return [key, null] as const;
+        }
+      }));
+      setBetNibbles(Object.fromEntries(pairsNib));
+      const pairsHash = await Promise.all(lot.bets.map(async (c) => {
+        const key = `${c.outPoint.txHash}:${c.outPoint.index}`;
+        try {
+          const r = await checkBetResultByTipHeader(client, c, { confirmations });
+          return [key, r.headerHash] as const;
+        } catch (_e) {
+          return [key, null] as const;
+        }
+      }));
+      setBetTargetHashes(Object.fromEntries(pairsHash));
+    } catch (_e) {
+      setLotBets([]);
+      setLotPots([]);
+      setBetNibbles({});
+      setBetTargetHashes({});
+    }
   };
 
   useEffect(() => {
-    setStatus('');
     void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, page]);
+  }, [client]);
 
   // 每秒刷新一次当前区块高度
   useEffect(() => {
@@ -48,9 +154,14 @@ export default function Home() {
     const tick = async () => {
       try {
         const header = await client.getTipHeader();
-        if (!cancelled) setTipNumber(BigInt(header.number));
+        if (!cancelled) {
+          setTipNumber(BigInt(header.number));
+          setTipHash(header.hash);
+          const nib = parseInt(header.hash.slice(-1), 16);
+          setTipNibble(Number.isNaN(nib) ? null : nib);
+        }
       } catch (_e) {
-        if (!cancelled) setTipNumber(null);
+        if (!cancelled) { setTipNumber(null); setTipHash(null); setTipNibble(null); }
       }
     };
     void tick();
@@ -59,28 +170,35 @@ export default function Home() {
   }, [client]);
 
   useEffect(() => {
-    // Resolve last payer address for each listed cell
     let cancelled = false;
     const run = async () => {
-      if (!client) return;
-      const entries = await Promise.all(items.map(async ({ cell, state }) => {
-        const key = formatOutPoint(cell);
+      if (!client || tipNumber == null) return;
+      const pairs = await Promise.all(lotBets.map(async (c) => {
+        const key = `${c.outPoint.txHash}:${c.outPoint.index}`;
         try {
-          const addr = await resolveLastPayerAddress(client, cell, state.lastPayerLockHash);
-          return [key, addr] as const;
+          const r = await checkBetResultByTipHeader(client, c, { confirmations });
+          return [key, r.nibble] as const;
         } catch (_e) {
           return [key, null] as const;
         }
       }));
-      if (!cancelled) {
-        const m: Record<string, string | null> = {};
-        entries.forEach(([k, v]) => { m[k] = v; });
-        setLastPayerAddrMap(m);
-      }
+      if (!cancelled) setBetNibbles(Object.fromEntries(pairs));
+      const pairsHash = await Promise.all(lotBets.map(async (c) => {
+        const key = `${c.outPoint.txHash}:${c.outPoint.index}`;
+        try {
+          const r = await checkBetResultByTipHeader(client, c, { confirmations });
+          return [key, r.headerHash] as const;
+        } catch (_e) {
+          return [key, null] as const;
+        }
+      }));
+      if (!cancelled) setBetTargetHashes(Object.fromEntries(pairsHash));
     };
     void run();
     return () => { cancelled = true; };
-  }, [items, client]);
+  }, [client, tipNumber, lotBets, confirmations]);
+
+  
 
   useEffect(() => {
     let cancelled = false;
@@ -99,19 +217,7 @@ export default function Home() {
     return () => { cancelled = true; };
   }, [signer, client]);
 
-  const formatOutPoint = (cell: any) => `${cell.outPoint.txHash}:${cell.outPoint.index}`;
-  const isExpired = (state: ReturnType<typeof decodeCountdownState>) => (tipNumber != null ? tipNumber >= state.endBlock : false);
-
   const BLOCK_SECONDS = 10;
-  const formatDuration = (totalSeconds: number) => {
-    const sec = Math.max(0, Math.floor(totalSeconds));
-    const d = Math.floor(sec / 86400);
-    const h = Math.floor((sec % 86400) / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = sec % 60;
-    if (d > 0) return `${d}天 ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  };
   return (
     <>
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
@@ -131,114 +237,85 @@ export default function Home() {
       </header>
 
       <main className="max-w-screen-md mx-auto px-4 py-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="text-xl font-semibold">倒计时 Cells</div>
-          <button className="rounded-full border px-4 py-2" onClick={() => { setStatus(''); void refresh(); }} disabled={!client}>刷新</button>
-        </div>
         <div className="text-sm text-gray-600 mb-2">当前区块: {tipNumber ? tipNumber.toString() : '-'}</div>
 
-        {status ? <div className="mb-2 text-red-600 break-all">{status}</div> : null}
-
-        <div className="space-y-3">
-          {items.length === 0 ? (
-            <div className="text-sm text-gray-500">暂无数据</div>
-          ) : (
-            items.map(({ cell, state }) => {
-              const key = formatOutPoint(cell);
-              const expired = isExpired(state);
-              const remainingBlocks = tipNumber != null && state.endBlock > tipNumber ? (state.endBlock - tipNumber) : BigInt(0);
-               const countdownSec = Number(remainingBlocks) * BLOCK_SECONDS;
-              return (
-                <div key={key} className="border rounded-2xl p-4">
-                  <div className="text-xs text-gray-500">{key}</div>
-                  <div className="grid grid-cols-2 gap-2 text-sm mt-2">
-                    {/* <div>version: {state.version}</div> */}
-                    <div>结束区块: {state.endBlock.toString()}</div>
-                    <div className="text-right">倒计时: {tipNumber != null ? formatDuration(countdownSec) : '-'}</div>
-                    <div className="col-span-2 break-all">
-                      {lastPayerAddrMap[key]
-                        ? <>最后付款人地址: {lastPayerAddrMap[key]}{myAddress && ((lastPayerAddrMap[key] ?? '').toLowerCase() === (myAddress ?? '').toLowerCase()) ? ' (我)' : ''}</>
-                        : <>最后付款人锁哈希: {state.lastPayerLockHash}</>}
-                    </div>
-                    <div>每 CKB 增加区块数: {state.rateBlocksPerCkb}</div>
-                    <div>最小追加 CKB: {ccc.fixedPointToString(state.minAddShannons)}</div>
-                    <div>当前Cell 容量: {ccc.fixedPointToString(cell.cellOutput.capacity)} CKB</div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between">
-                    <div className={expired ? 'text-green-700' : 'text-blue-700'}>
-                      {expired ? '已到期' : '未到期'}
-                    </div>
-                    {!expired ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          className="rounded-full border px-3 py-1 text-sm"
-                          placeholder="追加 CKB"
-                          type="number"
-                          inputMode="numeric"
-                          min={1}
-                          step={1}
-                          value={addedMap[key] ?? ''}
-                          onInput={(e) => {
-                            let v = e.currentTarget.value;
-                            v = v.replace(/[^0-9]/g, '');
-                            setAddedMap((m) => ({ ...m, [key]: v }));
-                          }}
-                        />
-                        <button
-                          className="rounded-full bg-blue-600 text-white px-4 py-1 text-sm disabled:opacity-50"
-                          disabled={!signer}
-                          onClick={async () => {
-                            if (!signer) return;
-                            try {
-                              const txHash = await extendSpecificCountdownCell(signer, cell, addedMap[key] ?? '');
-                              setStatus(`延长成功: ${txHash}`);
-                              void refresh();
-                            } catch (e: any) {
-                              setStatus(`延长失败: ${e?.message ?? String(e)}`);
-                            }
-                          }}
-                        >延长</button>
+        <div className="mt-10">
+          <div className="text-xl font-semibold mb-2">Lottery</div>
+          {lotStatus ? <div className="mb-2 text-red-600 break-all">{lotStatus}</div> : null}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="col-span-2 text-sm text-gray-600">
+              平台地址固定：{platformAddress}
+            </div>
+            <div className="col-span-2 text-sm text-gray-600">
+              平台手续费固定：{houseEdgeBp} 基点；确认数固定：{confirmations}；下注金额固定：{stakeCkb} CKB
+            </div>
+            <div className="flex items-center gap-2">
+              <select className="rounded-full border px-3 py-2" value={guess} onChange={(e) => setGuess(Number(e.currentTarget.value) as 0 | 1)}>
+                <option value={0}>小(0-7)</option>
+                <option value={1}>大(8-f)</option>
+              </select>
+              <button className="rounded-full bg-blue-600 text-white px-4 py-2 disabled:opacity-50" disabled={!signer || !client} onClick={async () => {
+                if (!signer || !client) return;
+                try {
+                  const addr = await ccc.Address.fromString(platformAddress, client);
+                  const ph = scriptToHash(addr.script) as `0x${string}`;
+                  const tx = await createLotteryBet(signer, { platformLockHash: ph, houseEdgeBp, confirmations }, { stakeCkb, guess });
+                  setLotStatus(`创建成功: ${tx}`);
+                  void refresh();
+                } catch (e: any) {
+                  setLotStatus(`创建失败: ${formatErr(e)}`);
+                }
+              }}>创建下注</button>
+              <button className="rounded-full border px-4 py-2" onClick={() => { setLotStatus(''); void refresh(); }} disabled={!client}>刷新下注</button>
+            </div>
+          </div>
+          <div className="mt-4 space-y-3">
+            {lotBets.length === 0 ? <div className="text-sm text-gray-500">暂无下注</div> : (
+              lotBets.map((c) => {
+                const key = `${c.outPoint.txHash}:${c.outPoint.index}`;
+                let info: any = null;
+                try { info = decodeLotteryBetData(c.outputData); } catch (_e) {}
+                const target = betTargetNumbers[key] ?? null;
+                const targetReached = tipNumber != null && target != null && (target <= tipNumber);
+                const nib = betNibbles[key];
+                const win = targetReached && nib != null ? ((info.guess === 0 && nib < 8) || (info.guess === 1 && nib >= 8)) : null;
+                const statusText = !info ? '' : (!targetReached ? '待确认' : (win ? '已中奖' : '未中奖'));
+                return (
+                  <div key={key} className="border rounded-2xl p-4">
+                    <div className="text-xs text-gray-500">{key}</div>
+                    {info ? (
+                      <div className="grid grid-cols-2 gap-2 text-sm mt-2">
+                        <div>下注: {ccc.fixedPointToString(info.stakeShannons)} CKB</div>
+                        <div className="text-right">猜: {info.guess === 0 ? '小' : '大'}</div>
+                        <div>下注区块: {betCreatedBlocks[key] ? betCreatedBlocks[key]!.toString() : '-'}</div>
+                        <div className="text-right">下注者: {info.bettorLockHash}</div>
+                        <div>目标区块: {betTargetNumbers[key] ? betTargetNumbers[key]!.toString() : '-'}</div>
+                        {targetReached ? <div className="text-right">目标哈希: {betTargetHashes[key] ?? '-'}</div> : null}
+                        {targetReached ? <div className="col-span-2">目标哈希最低位: {nib ?? '-'}</div> : null}
+                        <div className="col-span-2">是否中奖: {statusText}</div>
                       </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <button
-                          className="rounded-full bg-green-700 text-white px-4 py-1 text-sm disabled:opacity-50"
-                          disabled={!signer || !myLockHash || myLockHash.toLowerCase() !== state.lastPayerLockHash.toLowerCase()}
-                          onClick={async () => {
-                            if (!signer) return;
-                            try {
-                              const txHash = await closeSpecificCountdownCell(signer, cell);
-                              setStatus(`领取成功: ${txHash}`);
-                              void refresh();
-                            } catch (e: any) {
-                              setStatus(`领取失败: ${e?.message ?? String(e)}`);
-                            }
-                          }}
-                        >领取</button>
-                        {!myLockHash || (myLockHash.toLowerCase() !== state.lastPayerLockHash.toLowerCase()) ? (
-                          <span className="text-xs text-gray-500">仅最后出价者可领取</span>
-                        ) : null}
-                      </div>
-                    )}
+                    ) : null}
                   </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        <div className="flex items-center justify-between mt-6">
-          <button
-            className="rounded-full border px-4 py-2 disabled:opacity-50"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-          >上一页</button>
-          <div className="text-sm text-gray-600">第 {page} 页</div>
-          <button
-            className="rounded-full border px-4 py-2 disabled:opacity-50"
-            disabled={!hasMore}
-            onClick={() => setPage((p) => p + 1)}
-          >下一页</button>
+                );
+              })
+            )}
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <button className="rounded-full bg-green-700 text-white px-4 py-2 disabled:opacity-50" disabled={!signer || !client || !platformAddress || lotBets.length === 0 || !canSettle} onClick={async () => {
+              if (!signer || !client) return;
+              if (!canSettle) { setLotStatus('暂无可结算中奖'); return; }
+              const my = [] as any[];
+              lotBets.forEach((c) => {
+                try {
+                  const d = decodeLotteryBetData(c.outputData);
+                  if (myLockHash && d.bettorLockHash.toLowerCase() === myLockHash.toLowerCase()) my.push(c);
+                } catch (_e) {}
+              });
+              const tx = await settleLotteryMyWins(signer, { platformAddress, confirmations, houseEdgeBp }, my, lotBets, lotPots[0]);
+              setLotStatus(`结算成功: ${tx}`);
+              void refresh();
+            }}>结算我的中奖</button>
+          </div>
         </div>
 
         <div className="my-12 text-gray-500 italic">

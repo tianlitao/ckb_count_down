@@ -10,6 +10,28 @@ import {
   decodeCountdownState,
 } from './countdown-actions';
 
+function formatErr(e: any): string {
+  try {
+    if (e == null) return '未知错误';
+    if (typeof e === 'string') return e;
+    if (typeof e === 'object') {
+      const d = (e as any).data;
+      if (typeof d === 'string' && d.length > 0) return d;
+      if ('message' in (e as any)) {
+        const m = (e as any).message;
+        if (typeof m === 'string' && m.length > 0) {
+          const lower = m.toLowerCase();
+          if (lower.includes('cannot read properties of undefined')) {
+            return '未知错误：错误对象不合法，请刷新页面或重试';
+          }
+          return m;
+        }
+      }
+    }
+    try { return JSON.stringify(e); } catch { return String(e); }
+  } catch { return String(e); }
+}
+
 function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
@@ -54,7 +76,7 @@ export default function Countdown() {
       const s = decodeCountdownState(cell.outputData);
       setState(s);
     } catch (e: any) {
-      setStatus(`解析状态失败: ${e?.message ?? String(e)}`);
+      setStatus(`解析状态失败: ${formatErr(e)}`);
     }
   };
 
@@ -144,7 +166,7 @@ export default function Countdown() {
                 setStatus(`创建成功: ${txHash}`);
                 void refreshState();
               } catch (e: any) {
-                setStatus(`创建失败: ${e?.message ?? String(e)}`);
+                setStatus(`创建失败: ${formatErr(e)}`);
               }
             }}
           >创建</Button>
@@ -173,7 +195,7 @@ export default function Countdown() {
                 setStatus(`延长成功: ${txHash}`);
                 void refreshState();
               } catch (e: any) {
-                setStatus(`延长失败: ${e?.message ?? String(e)}`);
+                setStatus(`延长失败: ${formatErr(e)}`);
               }
             }}
           >延长</Button>
@@ -192,7 +214,7 @@ export default function Countdown() {
                 setStatus(`关闭成功: ${txHash}`);
                 void refreshState();
               } catch (e: any) {
-                setStatus(`关闭失败: ${e?.message ?? String(e)}`);
+                setStatus(`关闭失败: ${formatErr(e)}`);
               }
             }}
           >关闭</Button>

@@ -17,6 +17,28 @@ export default function CreatePage() {
   const [rateBlocksPerCkb, setRateBlocksPerCkb] = useState<string>('1');
   const [minAddCkb, setMinAddCkb] = useState<string>('1');
 
+  function formatErr(e: any): string {
+    try {
+      if (e == null) return '未知错误';
+      if (typeof e === 'string') return e;
+      if (typeof e === 'object') {
+        const d = (e as any).data;
+        if (typeof d === 'string' && d.length > 0) return d;
+        if ('message' in (e as any)) {
+          const m = (e as any).message;
+          if (typeof m === 'string' && m.length > 0) {
+            const lower = m.toLowerCase();
+            if (lower.includes('cannot read properties of undefined')) {
+              return '未知错误：错误对象不合法，请刷新页面或重试';
+            }
+            return m;
+          }
+        }
+      }
+      try { return JSON.stringify(e); } catch { return String(e); }
+    } catch { return String(e); }
+  }
+
   useEffect(() => {
     const run = async () => {
       if (!client) return;
@@ -116,7 +138,7 @@ export default function CreatePage() {
                   });
                   setStatus(`创建成功: ${txHash}`);
                 } catch (e: any) {
-                  setStatus(`创建失败: ${e?.message ?? String(e)}`);
+                  setStatus(`创建失败: ${formatErr(e)}`);
                 }
               }}
             >创建</button>

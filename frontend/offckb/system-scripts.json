@@ -492,25 +492,6 @@
           }
         ]
       }
-    },
-    "always_success": {
-      "name": "always_success",
-      "file": "FileSystem(/Users/mac/Library/Application Support/offckb-nodejs/devnet/specs/always_success)",
-      "script": {
-        "codeHash": "0xd483925160e4232b2cb29f012e8380b7b612d71cf4e79991476b6bcf610735f6",
-        "hashType": "type",
-        "cellDeps": [
-          {
-            "cellDep": {
-              "outPoint": {
-                "txHash": "0xf754a81b5768f5443f1388570b43a06e3215581b72b1ca87c51c3c5400cd6da9",
-                "index": 0
-              },
-              "depType": "code"
-            }
-          }
-        ]
-      }
     }
   },
   "mainnet": {
