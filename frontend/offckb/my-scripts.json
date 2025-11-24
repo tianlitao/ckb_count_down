@@ -48,13 +48,13 @@
       ]
     },
     "countdown": {
-      "codeHash": "0x42adc565c704aa5711fe470005ed841a3007c44dd5dce2fdd96accf295b7b988",
+      "codeHash": "0xac48d42a1b4cae8ad2deef012b3d7e97fd3486904f19ba58c94c05f1b297c252",
       "hashType": "data1",
       "cellDeps": [
         {
           "cellDep": {
             "outPoint": {
-              "txHash": "0x45a92cef8f86a2ecfae47e207c601f7fc853efa5e6830a63d39ee11c12159ce6",
+              "txHash": "0xf26e549ad087137a078cebe3e82e6479fa125a81d32fc8acfb5faf0c207c184f",
               "index": 0
             },
             "depType": "code"

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 黑色背景底座，确保在浅色浏览器主题下可见 -->
+  <circle cx="32" cy="32" r="32" fill="#050505"/>
+
+  <!-- CKB 风格的霓虹绿六边形外框 -->
+  <path d="M32 4 L58 20 L58 44 L32 60 L6 44 L6 20 Z"
+        fill="none"
+        stroke="#00cc9b"
+        stroke-width="4"
+        stroke-linejoin="round"/>
+
+  <!-- 中心的金色奖池/哈希核心 -->
+  <path d="M32 18 L44 32 L32 46 L20 32 Z"
+        fill="#ffd700"/>
+</svg>

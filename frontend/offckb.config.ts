@@ -61,6 +61,8 @@ export interface NetworkMyScripts {
 export interface NetworkConfig {
   rpc_url: string;
   addressPrefix: AddressPrefix;
+  explorer_api_base: string;
+  explorer_web_base: string;
 }
 
 export interface OffCKBConfig {
@@ -75,6 +77,8 @@ export interface OffCKBConfig {
   readonly currentNetwork: Network;
   readonly addressPrefix: AddressPrefix;
   readonly rpcUrl: string;
+  readonly explorerApiBase: string;
+  readonly explorerWebBase: string;
   readonly systemScripts: SystemScriptsRecord;
   readonly myScripts: MyScriptsRecord;
 }
@@ -101,16 +105,22 @@ const offCKBConfig: OffCKBConfig = {
   contractInfoFolder: './offckb',
   networks: {
     devnet: {
-      rpc_url: 'http://127.0.0.1:9000', // 9000 是 offckb devnet 代理端口（当前运行日志）
+      rpc_url: 'http://127.0.0.1:9000',
       addressPrefix: 'ckt',
+      explorer_api_base: 'https://testnet-api.explorer.nervos.org',
+      explorer_web_base: 'https://testnet.explorer.nervos.org',
     },
     testnet: {
       rpc_url: 'https://testnet.ckb.dev/rpc',
       addressPrefix: 'ckt',
+      explorer_api_base: 'https://testnet-api.nervosscan.com',
+      explorer_web_base: 'https://testnet.explorer.nervos.org',
     },
     mainnet: {
       rpc_url: 'https://mainnet.ckb.dev/rpc',
       addressPrefix: 'ckb',
+      explorer_api_base: 'https://api.explorer.nervos.org',
+      explorer_web_base: 'https://explorer.nervos.org',
     },
   },
 
@@ -129,6 +139,16 @@ const offCKBConfig: OffCKBConfig = {
     return this.networks[network].rpc_url;
   },
 
+  get explorerApiBase() {
+    const network = readEnvNetwork();
+    return this.networks[network].explorer_api_base;
+  },
+
+  get explorerWebBase() {
+    const network = readEnvNetwork();
+    return this.networks[network].explorer_web_base;
+  },
+
   get systemScripts() {
     const network = readEnvNetwork();
     const networkSystemScripts: NetworkSystemScripts = require('./offckb/system-scripts.json');
@@ -145,3 +165,5 @@ const offCKBConfig: OffCKBConfig = {
 };
 
 export default offCKBConfig;
+export const platformAddress = 'ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqvswq2x8n3yg4ed2gmu0kquncp7g2yuz2cxp9gz9';
+export const alwaysSuccessAddress = 'ckt1qr2g8yj3vrjzx2evk20szt5rszmmvykhrn6w0xv3ga4khnmpqu6lvqsemjs0q';

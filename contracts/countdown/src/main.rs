@@ -44,7 +44,6 @@ fn verify() -> Result<(), Error> {
 
     // 待支付列表
     let mut required_payouts: Vec<([u8; 32], u128)> = Vec::new(); // (LockHash, Amount)
-    let mut total_platform_fee: u128 = 0;
 
     let script_hash = script.calc_script_hash();
     let inputs = QueryIter::new(load_cell_type, Source::Input);
@@ -83,7 +82,6 @@ fn verify() -> Result<(), Error> {
                 // payout = floor(state + (stake * (10000 - house_edge_bp)) / 10000)
                 // 简化公式: stake * (20000 - edge) / 10000
                 let stake_u128 = bet.stake as u128;
-                let fee = (stake_u128 * config.house_edge_bp as u128 + 9999) / 10000; // ceil
                 let win_amount = (stake_u128 * (10000 - config.house_edge_bp as u128)) / 10000; // floor part of win
 
                 let payout = stake_u128 + win_amount; // 本金 + 赢得部分
@@ -92,7 +90,6 @@ fn verify() -> Result<(), Error> {
                 bettor_hash.copy_from_slice(bet.bettor_lock_hash);
 
                 required_payouts.push((bettor_hash, payout));
-                total_platform_fee += fee;
             } else {
                 // 未中奖：资金自动流入 Pot (因为 input_bets_capacity 增加了，但 required_payouts 没增加)
             }
@@ -102,6 +99,7 @@ fn verify() -> Result<(), Error> {
     // 3. 扫描输出 (Outputs)
     // 验证 Pot 的存续和 Payout/Fee 的支付
     let mut output_pot_capacity: u128 = 0;
+    let mut created_bets_count: u64 = 0;
 
     // 遍历 GroupOutput 寻找新的 Pot/Bet
     let outputs = QueryIter::new(load_cell_type, Source::GroupOutput);
@@ -114,24 +112,28 @@ fn verify() -> Result<(), Error> {
             output_pot_capacity += capacity as u128;
         } else {
             // ---> Output Bet (创建下注)
-            // 验证创建规则：stake >= capacity, data valid
+            // 验证创建规则：stake ≤ capacity, data valid
             let bet = BetData::from_slice(&data).ok_or(Error::InvalidBetData)?;
-            if (bet.stake as u128) < capacity as u128 {
-                return Err(Error::InvalidBetData); // 占位容量必须小于等于下注额
+            if (bet.stake as u128) > capacity as u128 {
+                return Err(Error::InvalidBetData);
             }
             // 验证 bet_block_number (可选: 必须是当前 tip 附近，防止恶意操控?)
             // 这里主要依靠结算时的 header 校验，创建时不做严格限制，简化逻辑
+            created_bets_count += 1;
         }
     }
 
     // 4. 核心资金平衡校验
     // 只有在进行“结算”操作时才严格校验 payouts。
     // 如果没有任何 Input Bet，说明这是纯粹的 Pot 调整或新下注，跳过结算校验。
+    if input_bets_capacity > 0 && created_bets_count > 0 {
+        return Err(Error::InvalidBetData);
+    }
     if input_bets_capacity > 0 {
         // 计算期望的 Pot 余额
         // Pot_Out = Pot_In + All_Bet_In - Payouts - Fees
         let total_in = input_pot_capacity + input_bets_capacity;
-        let total_out_demand = required_payouts.iter().map(|(_, amt)| *amt).sum::<u128>() + total_platform_fee;
+        let total_out_demand = required_payouts.iter().map(|(_, amt)| *amt).sum::<u128>();
 
         if total_in < total_out_demand {
             return Err(Error::PotCapacityError); // 奖池破产，无法支付
@@ -146,7 +148,16 @@ fn verify() -> Result<(), Error> {
 
         // 校验收款人是否收到钱 (遍历所有 Outputs，不仅仅是 GroupOutput)
         // 因为收款人使用的是普通 Lock，没有 Lottery Type Script
-        verify_payouts(&required_payouts, total_platform_fee, &config.platform_hash)?;
+        verify_payouts(&required_payouts, 0, &config.platform_hash)?;
+    } else {
+        if created_bets_count == 0 {
+            let mut platform_involved = false;
+            let iter = QueryIter::new(load_cell_lock_hash, Source::Input);
+            for (_i, hash) in iter.enumerate() {
+                if hash == config.platform_hash { platform_involved = true; break; }
+            }
+            if !platform_involved { return Err(Error::InvalidArgs); }
+        }
     }
 
     Ok(())

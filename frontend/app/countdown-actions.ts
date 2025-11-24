@@ -14,6 +14,7 @@ export type CountdownState = {
 };
 
 const SHANNONS_PER_CKB = BigInt(100000000);
+const MIN_POT_CAPACITY_SHANNONS = BigInt(120) * SHANNONS_PER_CKB;
 const MIN_COUNTDOWN_CELL_CAPACITY_SHANNONS = BigInt(130) * SHANNONS_PER_CKB;
 
 // 将交易对象序列化为可读 JSON（BigInt 转字符串）并打印
@@ -230,9 +231,15 @@ export async function checkBetResultByTipHeader(client: ccc.Client, bet: ccc.Cel
   const { number } = await getTipHeader(client);
   const { guess } = decodeLotteryBetData(bet.outputData);
   const created = await getCellCreationBlockNumber(client, bet);
-  if (created == null) throw new Error('无法解析下注创建区块');
+  if (created == null) {
+    // 交易还未上链，继续等待
+    return null as any;
+  }
   const target = created + BigInt(cfg.confirmations);
-  if (number < target) throw new Error(`区块高度未满足结算：tip ${number} < target ${target}`);
+  if (number < target) {
+    // 未达到确认数，继续等待
+    return null as any;
+  }
   const h = await client.getHeaderByNumber(target);
   if (!h?.hash) throw new Error('目标区块头不可用');
   const nibble = parseInt(h.hash.slice(-1), 16);
@@ -242,6 +249,38 @@ export async function checkBetResultByTipHeader(client: ccc.Client, bet: ccc.Cel
 
 function encodePotData(): `0x${string}` {
   return '0x01' as const;
+}
+
+export async function createPotCell(
+  signer: ccc.Signer,
+  cfg: { platformAddress: string; houseEdgeBp: number; confirmations: number },
+  capacityCkb: string | number,
+): Promise<string> {
+  const client = signer.client;
+  const [{ hash }, depsLottery, depsAlways] = await Promise.all([
+    getTipHeader(client),
+    getLotteryCellDeps(client),
+    getAlwaysSuccessCellDeps(client),
+  ]);
+  const platformLock = (await ccc.Address.fromString(cfg.platformAddress, client)).script;
+  const ph = scriptToHash(platformLock) as `0x${string}`;
+  const type = getLotteryTypeScriptWithArgs({ platformLockHash: ph, houseEdgeBp: cfg.houseEdgeBp, confirmations: cfg.confirmations });
+  const addr = await signer.getRecommendedAddress();
+  const walletLock = (await ccc.Address.fromString(addr, client)).script;
+  const depsWallet = await getWalletLockCellDeps(client, walletLock);
+  const capacity = BigInt(ccc.fixedPointFrom(capacityCkb));
+  const tx = ccc.Transaction.from({
+    cellDeps: [...depsLottery, ...depsAlways, ...depsWallet],
+    headerDeps: [hash],
+    outputs: [{ lock: getAlwaysSuccessLock(), type, capacity }],
+    outputsData: [encodePotData()],
+  });
+  logRawTx('init:create_pot', tx);
+  await tx.completeInputsByCapacity(signer);
+  logRawTx('afterInputs:create_pot', tx);
+  await tx.completeFeeBy(signer);
+  logRawTx('final:create_pot', tx);
+  return signer.sendTransaction(tx);
 }
 
 export async function settleLotteryMyWins(
@@ -277,23 +316,20 @@ export async function settleLotteryMyWins(
   let payoutTotal = BigInt(0);
   let feeTotal = BigInt(0);
   const inputs: any[] = [];
-  // 先收集「我的中奖下注」
-  const debugHeaders: { target: string; header: string; nibble: number; guess: number; win: boolean; kind: 'win' | 'lose' }[] = [];
   for (const c of bets) {
     const d = decodeLotteryBetData(c.outputData);
     const created = await getCellCreationBlockNumber(client, c);
     if (created == null) continue;
     const hCreated1 = await client.getHeaderByNumber(created);
-    if (hCreated1?.hash) headersSet.add(hCreated1.hash);
     const target = created + BigInt(confEff);
     if (BigInt(number) < target) continue;
     const h = await client.getHeaderByNumber(target);
     if (!h?.hash) continue;
-    headersSet.add(h.hash);
     const nib1 = parseInt(h.hash.slice(-1), 16);
     const win = (d.guess === 0 && nib1 < 8) || (d.guess === 1 && nib1 >= 8);
-    debugHeaders.push({ target: target.toString(), header: h.hash, nibble: nib1, guess: d.guess, win, kind: win ? 'win' : 'lose' });
     if (win && d.bettorLockHash.toLowerCase() === myHash.toLowerCase()) {
+      if (hCreated1?.hash) headersSet.add(hCreated1.hash);
+      headersSet.add(h.hash);
       winnersStake += d.stakeShannons;
       const payout = (d.stakeShannons * BigInt(10000 - edgeEff)) / BigInt(10000);
       const fee = (d.stakeShannons * BigInt(edgeEff) + BigInt(9999)) / BigInt(10000);
@@ -302,31 +338,29 @@ export async function settleLotteryMyWins(
       inputs.push(ccc.CellInput.from({ previousOutput: c.outPoint }));
     }
   }
-  // 选择最少的输家下注来覆盖中奖利润（若有奖池则优先用奖池）
+  // 选择输家下注覆盖中奖利润（优先使用输家，不足时再使用奖池）
   let potIn = BigInt(0);
-  if (pot) {
-    potIn = pot.cellOutput.capacity;
-    inputs.push(ccc.CellInput.from({ previousOutput: pot.outPoint }));
-  }
-
   let selectedLosersStake = BigInt(0);
-  const needFromLosers = (payoutTotal + feeTotal) > potIn ? ((payoutTotal + feeTotal) - potIn) : BigInt(0);
-  for (const c of loserBets) {
+  const needFromLosers = payoutTotal;
+  const usedLosers = new Set<string>();
+  const losersShuffled = [...loserBets].sort(() => Math.random() - 0.5);
+  for (const c of losersShuffled) {
     if (selectedLosersStake >= needFromLosers) break;
     const d = decodeLotteryBetData(c.outputData);
     const created = await getCellCreationBlockNumber(client, c);
     if (created == null) continue;
     const hCreated2 = await client.getHeaderByNumber(created);
-    if (hCreated2?.hash) headersSet.add(hCreated2.hash);
     const target = created + BigInt(confEff);
     if (BigInt(number) < target) continue;
     const h = await client.getHeaderByNumber(target);
     if (!h?.hash) continue;
-    headersSet.add(h.hash);
     const nib2 = parseInt(h.hash.slice(-1), 16);
     const win = (d.guess === 0 && nib2 < 8) || (d.guess === 1 && nib2 >= 8);
     if (!win) {
-      debugHeaders.push({ target: target.toString(), header: h.hash, nibble: nib2, guess: d.guess, win, kind: 'lose' });
+      const key = `${c.outPoint.txHash}:${c.outPoint.index}`;
+      usedLosers.add(key);
+      if (hCreated2?.hash) headersSet.add(hCreated2.hash);
+      headersSet.add(h.hash);
       selectedLosersStake += d.stakeShannons;
       inputs.push(ccc.CellInput.from({ previousOutput: c.outPoint }));
     }
@@ -336,31 +370,76 @@ export async function settleLotteryMyWins(
     throw new Error('当前账户暂无已确认且中奖的下注');
   }
 
-  if (!pot && selectedLosersStake < (payoutTotal + feeTotal)) {
-    throw new Error('输家不足以覆盖中奖利润与平台费');
+  // 若输家不足，尝试使用奖池覆盖剩余
+  if (selectedLosersStake < payoutTotal) {
+    const shortfall = payoutTotal - selectedLosersStake;
+    if (!pot) {
+      throw new Error('输家不足以覆盖中奖利润，且无奖池可用');
+    }
+    potIn = pot.cellOutput.capacity;
+    if (potIn < shortfall) {
+      throw new Error('奖池与输家总额不足以覆盖中奖利润');
+    }
+    inputs.push(ccc.CellInput.from({ previousOutput: pot.outPoint }));
   }
-  if (pot && potIn + selectedLosersStake < (payoutTotal + feeTotal)) {
-    throw new Error('奖池与输家总额不足以覆盖中奖利润与平台费');
+
+  let baseOutCap = potIn + selectedLosersStake - payoutTotal;
+  if (baseOutCap < MIN_POT_CAPACITY_SHANNONS) {
+    for (const c of losersShuffled) {
+      if (baseOutCap >= MIN_POT_CAPACITY_SHANNONS) break;
+      const key = `${c.outPoint.txHash}:${c.outPoint.index}`;
+      if (usedLosers.has(key)) continue;
+      const d = decodeLotteryBetData(c.outputData);
+      const created = await getCellCreationBlockNumber(client, c);
+      if (created == null) continue;
+      const hCreated3 = await client.getHeaderByNumber(created);
+      const target = created + BigInt(confEff);
+      if (BigInt(number) < target) continue;
+      const h3 = await client.getHeaderByNumber(target);
+      if (!h3?.hash) continue;
+      const nib3 = parseInt(h3.hash.slice(-1), 16);
+      const win3 = (d.guess === 0 && nib3 < 8) || (d.guess === 1 && nib3 >= 8);
+      if (!win3) {
+        usedLosers.add(key);
+        if (hCreated3?.hash) headersSet.add(hCreated3.hash);
+        headersSet.add(h3.hash);
+        selectedLosersStake += d.stakeShannons;
+        inputs.push(ccc.CellInput.from({ previousOutput: c.outPoint }));
+        baseOutCap = potIn + selectedLosersStake - payoutTotal;
+      }
+    }
+  }
+
+  if (baseOutCap < MIN_POT_CAPACITY_SHANNONS) {
+    const typeArgs = getLotteryTypeScriptWithArgs({ platformLockHash: scriptToHash(platformLock) as `0x${string}`, houseEdgeBp: edgeEff, confirmations: confEff });
+    const listed = await listLotteryCells(client, { platformLockHash: scriptToHash(platformLock) as `0x${string}`, houseEdgeBp: edgeEff, confirmations: confEff }, 20);
+    for (const p of listed.pots) {
+      if (baseOutCap >= MIN_POT_CAPACITY_SHANNONS) break;
+      if (pot && (p.outPoint.txHash === pot.outPoint.txHash && p.outPoint.index === pot.outPoint.index)) continue;
+      inputs.push(ccc.CellInput.from({ previousOutput: p.outPoint }));
+      potIn += p.cellOutput.capacity;
+      baseOutCap = potIn + selectedLosersStake - payoutTotal;
+    }
+  }
+
+  if (baseOutCap < MIN_POT_CAPACITY_SHANNONS) {
+    throw new Error('输家与奖池不足以维持最小奖池容量，无法使用钱包补足');
   }
 
   const outputs: any[] = [];
   const outputsData: (`0x${string}`)[] = [];
   outputs.push({ lock: walletLock, capacity: winnersStake + payoutTotal });
-  outputsData.push('0x02');
-  outputs.push({ lock: platformLock, capacity: feeTotal });
   outputsData.push('0x');
   {
-    const outCap = potIn + selectedLosersStake - payoutTotal - feeTotal;
-    if (outCap > BigInt(0)) {
-      if (pot) {
-        outputs.push({ lock: pot.cellOutput.lock, type: pot.cellOutput.type, capacity: outCap });
-        outputsData.push(encodePotData());
-      } else {
-        const typeOut = getLotteryTypeScriptWithArgs({ platformLockHash: scriptToHash(platformLock) as `0x${string}`, houseEdgeBp: edgeEff, confirmations: confEff });
-        const lockOut = getAlwaysSuccessLock();
-        outputs.push({ lock: lockOut, type: typeOut, capacity: outCap });
-        outputsData.push(encodePotData());
-      }
+    const outCap = baseOutCap;
+    if (pot) {
+      outputs.push({ lock: pot.cellOutput.lock, type: pot.cellOutput.type, capacity: outCap });
+      outputsData.push(encodePotData());
+    } else {
+      const typeOut = getLotteryTypeScriptWithArgs({ platformLockHash: scriptToHash(platformLock) as `0x${string}`, houseEdgeBp: edgeEff, confirmations: confEff });
+      const lockOut = getAlwaysSuccessLock();
+      outputs.push({ lock: lockOut, type: typeOut, capacity: outCap });
+      outputsData.push(encodePotData());
     }
   }
 
@@ -389,12 +468,11 @@ export async function settleLotteryMyWins(
     feeTotal: feeTotal.toString(),
     potIn: potIn.toString(),
     selectedLosersStake: selectedLosersStake.toString(),
-    headerDeps: headerDepsList,
-    debugHeaders,
+    headerDeps: headerDepsList
   });
   await tx.completeInputsByCapacity(signer);
   logRawTx('afterInputs:settle', tx);
-  await tx.completeFeeChangeToLock(signer, walletLock);
+  await tx.completeFeeBy(signer);
   logRawTx('final:settle', tx);
   const signed = await signer.signTransaction(tx);
   return await signer.client.sendTransaction(signed, 'passthrough');
@@ -428,6 +506,38 @@ export async function findLotteryPot(
 ): Promise<ccc.Cell | undefined> {
   const { pots } = await listLotteryCells(client, cfg, 20);
   return pots[0];
+}
+
+export async function transferPotToNormalCell(
+  signer: ccc.Signer,
+  pot: ccc.Cell,
+  toAddress: string,
+): Promise<string> {
+  const client = signer.client;
+  const [{ hash }, depsLottery, depsAlways] = await Promise.all([
+    getTipHeader(client),
+    getLotteryCellDeps(client),
+    getAlwaysSuccessCellDeps(client),
+  ]);
+  const addr = await ccc.Address.fromString(toAddress, client);
+  const toLock = addr.script;
+  const walletAddr = await signer.getRecommendedAddress();
+  const walletLock = (await ccc.Address.fromString(walletAddr, client)).script;
+  const depsWallet = await getWalletLockCellDeps(client, walletLock);
+  const input = ccc.CellInput.from({ previousOutput: pot.outPoint });
+  const tx = ccc.Transaction.from({
+    cellDeps: [...depsLottery, ...depsAlways, ...depsWallet],
+    headerDeps: [hash],
+    inputs: [input],
+    outputs: [{ lock: toLock, capacity: pot.cellOutput.capacity }],
+    outputsData: ['0x'],
+  });
+  logRawTx('init:transfer_pot', tx);
+  await tx.completeInputsByCapacity(signer);
+  logRawTx('afterInputs:transfer_pot', tx);
+  await tx.completeFeeBy(signer);
+  logRawTx('final:transfer_pot', tx);
+  return signer.sendTransaction(tx);
 }
 
 function scriptEq(a: any, b: any): boolean {
